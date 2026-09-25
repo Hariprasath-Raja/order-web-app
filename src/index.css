@@ -1,1 +1,51 @@
 @import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* =========================================================
+   GLOBAL CURSOR FIX: Enforce Hand Pointer everywhere clickable
+   ========================================================= */
+
+/* 1. All Native Clickable Elements & Roles */
+button,
+button *,
+[role="button"],
+[role="button"] *,
+a,
+a *,
+select,
+option,
+label,
+summary,
+input[type="checkbox"],
+input[type="radio"],
+input[type="submit"],
+input[type="button"],
+input[type="reset"] {
+  cursor: pointer !important;
+}
+
+/* 2. All elements with onclick attribute or interactive class */
+[onclick],
+.cursor-pointer,
+.cursor-pointer * {
+  cursor: pointer !important;
+}
+
+/* 3. Table Rows & List items intended for clicks */
+table tbody tr,
+table tbody tr td {
+  cursor: pointer;
+}
+
+/* 4. Strictly preserve Not-Allowed on Disabled states */
+button:disabled,
+button:disabled *,
+input:disabled,
+select:disabled,
+[aria-disabled="true"],
+.cursor-not-allowed,
+.cursor-not-allowed * {
+  cursor: not-allowed !important;
+}
