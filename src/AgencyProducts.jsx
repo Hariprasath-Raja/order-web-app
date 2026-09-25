@@ -138,7 +138,7 @@ export default function AgencyProducts({ currentUser }) {
     setSelectedUomId(item.UomId || '');
     setSelectedTaxId(item.TaxSlabId || '');
     setBasePrice(item.BasePrice);
-    setIsAvailable(item.IsAvailable);
+    setIsAvailable(item.IsAvailable !== false);
     setHsnCode(item.HsnCode || '');
     setMessage('');
   };
@@ -188,7 +188,6 @@ export default function AgencyProducts({ currentUser }) {
       if (updateError) {
         setMessage(`Error: ${updateError.message}`);
       } else {
-        // Price change audit log
         if (oldPriceNum !== currentPriceNum) {
           await supabase.from('ProductPriceLogs').insert([
             {
@@ -229,12 +228,12 @@ export default function AgencyProducts({ currentUser }) {
   };
 
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
+    <div className="w-full max-w-6xl mx-auto space-y-5">
       {/* Category Management Bar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200 shadow-sm space-y-4">
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
           <div>
-            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
               {editingCategoryId ? 'Edit Category' : 'Manage Categories'}
             </h3>
             <p className="text-[11px] text-slate-400">Click any category badge below to edit its name or order</p>
@@ -247,13 +246,13 @@ export default function AgencyProducts({ currentUser }) {
         </div>
 
         {/* Category Add/Edit Form */}
-        <form onSubmit={handleSaveCategory} className="flex flex-wrap items-center gap-3">
+        <form onSubmit={handleSaveCategory} className="flex flex-wrap items-center gap-2.5">
           <input
             type="text"
             placeholder="Category Name (e.g. Rice, Dhall, Spices)"
             value={catName}
             onChange={(e) => setCatName(e.target.value)}
-            className="flex-1 min-w-[200px] px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="flex-1 min-w-[200px] px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
             required
           />
           <input
@@ -262,12 +261,12 @@ export default function AgencyProducts({ currentUser }) {
             title="Display priority order"
             value={catOrder}
             onChange={(e) => setCatOrder(e.target.value)}
-            className="w-20 px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+            className="w-20 px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
           />
           <button
             type="submit"
             disabled={loading}
-            className="py-2 px-4 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg transition disabled:opacity-50"
+            className="py-2 px-4 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition disabled:opacity-50 cursor-pointer"
           >
             {loading ? 'Saving...' : editingCategoryId ? 'Update Category' : '+ Add Category'}
           </button>
@@ -275,7 +274,7 @@ export default function AgencyProducts({ currentUser }) {
             <button
               type="button"
               onClick={cancelEditCategory}
-              className="py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg transition"
+              className="py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
             >
               Cancel
             </button>
@@ -291,9 +290,9 @@ export default function AgencyProducts({ currentUser }) {
                 key={c.CategoryId}
                 type="button"
                 onClick={() => selectCategoryForEdit(c)}
-                className={`px-3 py-1 text-xs rounded-lg font-medium transition cursor-pointer flex items-center gap-1.5 ${
+                className={`px-3 py-1 text-xs rounded-xl font-medium transition cursor-pointer flex items-center gap-1.5 ${
                   isSelected
-                    ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-400 ring-offset-1'
+                    ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400 ring-offset-1'
                     : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
                 }`}
               >
@@ -309,10 +308,10 @@ export default function AgencyProducts({ currentUser }) {
 
       {message && (
         <div
-          className={`p-3 text-xs rounded-lg font-medium ${
+          className={`p-3 text-xs rounded-xl font-medium border ${
             message.startsWith('Error') || message.startsWith('Category Error')
-              ? 'bg-rose-50 text-rose-600 border border-rose-200'
-              : 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+              ? 'bg-rose-50 text-rose-600 border-rose-200'
+              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
           }`}
         >
           {message}
@@ -320,9 +319,9 @@ export default function AgencyProducts({ currentUser }) {
       )}
 
       {/* Main Grid: Product Form + Products List */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Product Form */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm h-fit">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
+        {/* Product Form Card */}
+        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs h-fit">
           <h3 className="text-sm font-bold text-slate-800 mb-1">
             {editingProductId ? 'Edit Product Rate & Specs' : 'Add New Product'}
           </h3>
@@ -338,7 +337,7 @@ export default function AgencyProducts({ currentUser }) {
                 placeholder="e.g. Ponni Boiled Rice (Deluxe)"
                 value={prodName}
                 onChange={(e) => setProdName(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
                 required
               />
             </div>
@@ -348,7 +347,7 @@ export default function AgencyProducts({ currentUser }) {
               <select
                 value={selectedCatId}
                 onChange={(e) => setSelectedCatId(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
                 required
               >
                 <option value="">-- Select Category --</option>
@@ -366,7 +365,7 @@ export default function AgencyProducts({ currentUser }) {
                 <select
                   value={selectedUomId}
                   onChange={(e) => setSelectedUomId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
                   required
                 >
                   <option value="">-- Unit --</option>
@@ -383,13 +382,13 @@ export default function AgencyProducts({ currentUser }) {
                 <select
                   value={selectedTaxId}
                   onChange={(e) => setSelectedTaxId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
                   required
                 >
                   <option value="">-- Tax Slab --</option>
                   {taxSlabs.map((t) => (
                     <option key={t.TaxSlabId} value={t.TaxSlabId}>
-                      {t.SlabName}
+                      {t.SlabName} ({t.TaxPercentage}%)
                     </option>
                   ))}
                 </select>
@@ -405,7 +404,7 @@ export default function AgencyProducts({ currentUser }) {
                   placeholder="e.g. 54.00"
                   value={basePrice}
                   onChange={(e) => setBasePrice(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
                   required
                 />
               </div>
@@ -417,12 +416,12 @@ export default function AgencyProducts({ currentUser }) {
                   placeholder="e.g. 1006"
                   value={hsnCode}
                   onChange={(e) => setHsnCode(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:outline-none"
+                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
                 />
               </div>
             </div>
 
-            {/* In-Form Active Switch */}
+            {/* Availability Switch */}
             <div className="flex items-center justify-between py-2 border-t border-slate-100">
               <div>
                 <span className="text-xs font-semibold text-slate-700 block">Stock Availability</span>
@@ -451,7 +450,7 @@ export default function AgencyProducts({ currentUser }) {
               <button
                 type="submit"
                 disabled={loading}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-lg shadow transition disabled:opacity-50"
+                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
               >
                 {loading ? 'Saving...' : editingProductId ? 'Update Product' : '+ Add Product'}
               </button>
@@ -459,7 +458,7 @@ export default function AgencyProducts({ currentUser }) {
                 <button
                   type="button"
                   onClick={cancelEditProduct}
-                  className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-lg transition"
+                  className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
                 >
                   Cancel
                 </button>
@@ -468,60 +467,81 @@ export default function AgencyProducts({ currentUser }) {
           </form>
         </div>
 
-        {/* Products List Grid */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-          <div className="px-5 py-3.5 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
+        {/* Product Catalog Responsive List */}
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
             <div>
-              <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Agency Product Catalog</h3>
-              <span className="text-[11px] text-slate-400">Click any row to edit rates or specs</span>
+              <h3 className="font-extrabold text-xs uppercase tracking-wider text-slate-800">
+                Agency Product Catalog
+              </h3>
+              <p className="text-[11px] text-slate-400">Click any card to edit rates or specs</p>
             </div>
-            <span className="text-[11px] text-slate-500 font-semibold">Total: {products.length}</span>
+            <span className="text-xs font-bold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-xl">
+              Total: {products.length}
+            </span>
           </div>
 
           <div className="divide-y divide-slate-100">
             {products.length === 0 ? (
-              <div className="p-8 text-center text-xs text-slate-400">
-                No products found. Add your first wholesale product from the left form!
+              <div className="py-12 text-center text-xs text-slate-400">
+                No products added yet. Use the form to register wholesale items.
               </div>
             ) : (
               products.map((p) => {
-                const isSelected = editingProductId === p.ProductId;
+                const isOutOfStock = p.IsAvailable === false;
+                const categoryName = p.Categories?.CategoryName;
+                const uomCode = p.UomMaster?.UomCode || 'PCS';
+                const taxPercent = p.TaxSlabMaster?.TaxPercentage ?? 0;
+
                 return (
                   <div
                     key={p.ProductId}
                     onClick={() => selectProductForEdit(p)}
-                    className={`px-5 py-3.5 flex items-center justify-between cursor-pointer transition select-none ${
-                      isSelected
-                        ? 'bg-emerald-50/70 border-l-4 border-emerald-500 pl-4'
-                        : 'hover:bg-slate-50'
-                    }`}
+                    className="p-3.5 sm:p-4 hover:bg-slate-50/80 transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 active:bg-slate-100/70"
                   >
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-xs text-slate-800">{p.ProductName}</span>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded">
-                          {p.Categories?.CategoryName || 'General'}
+                    {/* Left: Product Name, Category & GST */}
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-bold text-xs sm:text-sm text-slate-900 leading-tight">
+                          {p.ProductName}
                         </span>
+                        {categoryName && (
+                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md whitespace-nowrap">
+                            {categoryName}
+                          </span>
+                        )}
                       </div>
-                      <p className="text-[11px] text-slate-400 mt-1">
-                        Tax: {p.TaxSlabMaster?.SlabName || '0%'} {p.HsnCode ? `| HSN: ${p.HsnCode}` : ''}
-                      </p>
+
+                      <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
+                        <span>Tax: GST {taxPercent}%</span>
+                        {p.HsnCode && (
+                          <>
+                            <span>•</span>
+                            <span className="font-mono">HSN: {p.HsnCode}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex items-center gap-3">
-                      <div className="text-right">
-                        <span className="text-sm font-bold text-emerald-700">₹{p.BasePrice}</span>
-                        <span className="text-[10px] text-slate-400 block">per {p.UomMaster?.UomCode || 'Unit'}</span>
+                    {/* Right: Price & Stock Badge */}
+                    <div className="flex items-center justify-between sm:justify-end gap-3.5 pt-1.5 sm:pt-0 border-t border-slate-100/60 sm:border-0 shrink-0">
+                      <div className="sm:text-right">
+                        <div className="text-sm font-extrabold text-emerald-700 leading-tight">
+                          ₹{p.BasePrice}
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-medium">
+                          per {uomCode}
+                        </div>
                       </div>
 
                       <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
-                          p.IsAvailable
-                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
-                            : 'bg-rose-50 text-rose-600 border-rose-200'
+                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0 border ${
+                          isOutOfStock
+                            ? 'bg-rose-50 text-rose-700 border-rose-200'
+                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
                         }`}
                       >
-                        {p.IsAvailable ? 'In Stock' : 'Out'}
+                        {isOutOfStock ? 'Out of Stock' : 'In Stock'}
                       </span>
                     </div>
                   </div>
