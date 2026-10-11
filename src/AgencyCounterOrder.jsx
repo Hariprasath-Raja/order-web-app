@@ -1,326 +1,368 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Icons } from './Icons';
 
-export default function AgencyCounterOrder({ currentUser }) {
+export default function AgencyCounterOrder({ currentUser, selectedAgency }) {
+  // Shops State
   const [shops, setShops] = useState([]);
   const [selectedShop, setSelectedShop] = useState(null);
-  const [customerSearch, setCustomerSearch] = useState('');
-  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false);
+  const [shopSearchQuery, setShopSearchQuery] = useState('');
+  const [isShopDropdownOpen, setIsShopDropdownOpen] = useState(false);
 
-  const [categories, setCategories] = useState([]);
+  // Products & Categories State
   const [products, setProducts] = useState([]);
+  const [categories, setCategories] = useState([]);
   const [selectedCategory, setSelectedCategory] = useState('ALL');
-  const [productSearch, setProductSearch] = useState('');
-
+  const [productSearchQuery, setProductSearchQuery] = useState('');
   const [cart, setCart] = useState({});
-  const [paymentMethods, setPaymentMethods] = useState([]);
-  const [selectedPaymentId, setSelectedPaymentId] = useState(1);
-  const [orderStatus, setOrderStatus] = useState('accepted');
-
   const [loading, setLoading] = useState(false);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [orderSuccess, setOrderSuccess] = useState(null);
-  const [errorMessage, setErrorMessage] = useState('');
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState('');
+
+  // Payment Methods State
+  const [paymentMethods, setPaymentMethods] = useState([]);
+  const [selectedPaymentId, setSelectedPaymentId] = useState(null);
 
   useEffect(() => {
-    fetchInitialData();
+    fetchPaymentMethods();
   }, []);
 
-  const fetchInitialData = async () => {
-    setLoading(true);
-
-    const { data: shopsData } = await supabase
-      .from('ShopDetails')
-      .select(`
-        ShopId,
-        ShopCode,
-        ShopName,
-        OwnerName,
-        Route,
-        Address,
-        Users!inner ( UserId, Phone, IsActive )
-      `)
-      .eq('Users.IsActive', true)
-      .order('ShopId', { ascending: true });
-
-    if (shopsData) {
-      setShops(shopsData);
-      if (shopsData.length > 0) setSelectedShop(shopsData[0]);
+  useEffect(() => {
+    if (selectedAgency?.AgencyId) {
+      fetchShops();
+      fetchCategories();
+      fetchProducts();
+      setCart({});
     }
+  }, [selectedAgency]);
 
-    const { data: catData } = await supabase
+  const fetchShops = async () => {
+    if (!selectedAgency?.AgencyId) return;
+
+    try {
+      const { data: mappings, error: mapErr } = await supabase
+        .from('AgencyShopMapping')
+        .select('ShopId')
+        .eq('AgencyId', selectedAgency.AgencyId)
+        .eq('IsApproved', true);
+
+      let fetchedShops = [];
+
+      if (!mapErr && mappings && mappings.length > 0) {
+        const shopIds = mappings.map((m) => m.ShopId);
+        const { data: mappedShopData } = await supabase
+          .from('ShopDetails')
+          .select('*, Users ( Phone )')
+          .in('ShopId', shopIds)
+          .order('ShopName', { ascending: true });
+
+        if (mappedShopData && mappedShopData.length > 0) {
+          fetchedShops = mappedShopData;
+        }
+      }
+
+      if (fetchedShops.length === 0) {
+        const { data: allShops } = await supabase
+          .from('ShopDetails')
+          .select('*, Users ( Phone )')
+          .order('ShopName', { ascending: true });
+        if (allShops) fetchedShops = allShops;
+      }
+
+      setShops(fetchedShops);
+
+      if (fetchedShops.length > 0) {
+        setSelectedShop(fetchedShops[0]);
+      } else {
+        setSelectedShop(null);
+      }
+    } catch (err) {
+      console.error('Error loading shops:', err);
+    }
+  };
+
+  const fetchPaymentMethods = async () => {
+    const { data } = await supabase.from('PaymentMaster').select('*');
+    if (data && data.length > 0) {
+      setPaymentMethods(data);
+      const firstId = data[0].PaymentId || data[0].PaymentMethodId || 1;
+      setSelectedPaymentId(firstId);
+    } else {
+      setSelectedPaymentId(1);
+    }
+  };
+
+  const fetchCategories = async () => {
+    const { data } = await supabase
       .from('Categories')
       .select('*')
-      .order('DisplayOrder', { ascending: true });
-    if (catData) setCategories(catData);
+      .eq('AgencyId', selectedAgency.AgencyId)
+      .order('CategoryName', { ascending: true });
+    if (data) setCategories(data);
+  };
 
-    const { data: prodData } = await supabase
+  const fetchProducts = async () => {
+    setLoading(true);
+    const { data, error } = await supabase
       .from('Products')
       .select(`
-        ProductId,
-        ProductName,
-        BasePrice,
-        IsAvailable,
-        CategoryId,
-        HsnCode,
+        *,
+        Categories ( CategoryName ),
         UomMaster ( UomCode, UomName ),
-        TaxSlabMaster ( TaxPercentage, CgstPercentage, SgstPercentage )
+        TaxSlabMaster ( TaxPercentage, SlabName )
       `)
+      .eq('AgencyId', selectedAgency.AgencyId)
       .eq('IsAvailable', true)
       .order('ProductName', { ascending: true });
-    if (prodData) setProducts(prodData);
 
-    const { data: payData } = await supabase
-      .from('PaymentMaster')
-      .select('*')
-      .eq('IsActive', true);
-    if (payData && payData.length > 0) {
-      setPaymentMethods(payData);
-      setSelectedPaymentId(payData[0].PaymentId);
+    if (!error && data) {
+      setProducts(data);
     }
-
     setLoading(false);
   };
 
-  const updateQuantity = (productId, delta) => {
+  const updateQuantity = (product, qty) => {
+    const num = Math.max(0, parseFloat(qty) || 0);
     setCart((prev) => {
-      const currentQty = prev[productId] || 0;
-      const nextQty = Math.max(0, currentQty + delta);
-      if (nextQty === 0) {
-        const { [productId]: _, ...rest } = prev;
-        return rest;
+      const next = { ...prev };
+      if (num === 0) {
+        delete next[product.ProductId];
+      } else {
+        next[product.ProductId] = { product, quantity: num };
       }
-      return { ...prev, [productId]: nextQty };
+      return next;
     });
   };
 
-  const handleManualQuantity = (productId, value) => {
-    const qty = parseFloat(value);
-    setCart((prev) => {
-      if (isNaN(qty) || qty <= 0) {
-        const { [productId]: _, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [productId]: qty };
-    });
+  const handleSelectShop = (shop) => {
+    setSelectedShop(shop);
+    setShopSearchQuery('');
+    setIsShopDropdownOpen(false);
+    setMessage('');
   };
 
-  const cartItemsList = Object.entries(cart).map(([productId, quantity]) => {
-    const product = products.find((p) => p.ProductId === parseInt(productId));
-    if (!product) return null;
+  // Cart Calculations
+  const cartItems = Object.values(cart);
+  const totalUnits = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const totalWeight = cartItems.reduce(
+    (sum, item) =>
+      sum + (item.product.UomMaster?.UomCode === 'KG' ? item.quantity : 0),
+    0
+  );
+  const subtotal = cartItems.reduce(
+    (sum, item) => sum + item.quantity * parseFloat(item.product.BasePrice || 0),
+    0
+  );
+  const totalTax = cartItems.reduce((sum, item) => {
+    const itemSub = item.quantity * parseFloat(item.product.BasePrice || 0);
+    const taxRate = parseFloat(item.product.TaxSlabMaster?.TaxPercentage || 0) / 100;
+    return sum + itemSub * taxRate;
+  }, 0);
+  const totalAmount = subtotal + totalTax;
 
-    const basePrice = parseFloat(product.BasePrice) || 0;
-    const cgstRate = parseFloat(product.TaxSlabMaster?.CgstPercentage) || 0;
-    const sgstRate = parseFloat(product.TaxSlabMaster?.SgstPercentage) || 0;
-    const taxRate = parseFloat(product.TaxSlabMaster?.TaxPercentage) || (cgstRate + sgstRate);
+  // STRICT ORDER PLACEMENT
+  const handlePlaceOrder = async () => {
+    if (cartItems.length === 0 || !selectedAgency?.AgencyId) return;
 
-    const itemBaseTotal = basePrice * quantity;
-    const itemCgst = (itemBaseTotal * cgstRate) / 100;
-    const itemSgst = (itemBaseTotal * sgstRate) / 100;
-    const itemTotalTax = itemCgst + itemSgst;
-    const itemLineTotal = itemBaseTotal + itemTotalTax;
+    if (!selectedShop || !selectedShop.UserId) {
+      setMessage('Please select a valid registered shopkeeper with an active account.');
+      return;
+    }
 
-    return {
-      product,
-      quantity,
-      basePrice,
-      taxRate,
-      cgstRate,
-      sgstRate,
-      itemBaseTotal,
-      itemCgst,
-      itemSgst,
-      itemTotalTax,
-      itemLineTotal,
+    setSubmitting(true);
+    setMessage('');
+
+    const shopOwnerName =
+      selectedShop.OwnerName || selectedShop.ShopName || 'Shopkeeper';
+    const shopPhone =
+      selectedShop.Phone ||
+      selectedShop.Users?.Phone ||
+      '';
+    const shopAddress = selectedShop.Address || '';
+    const shopRoute = selectedShop.Route || 'Direct Route';
+
+    // 1. Insert into Orders Table
+    const orderPayload = {
+      AgencyId: selectedAgency.AgencyId,
+      ShopUserId: selectedShop.UserId,
+      PaymentId: selectedPaymentId ? parseInt(selectedPaymentId, 10) : 1,
+      OrderStatus: 'accepted',
+      SubTotal: parseFloat(subtotal.toFixed(2)),
+      TotalTaxAmount: parseFloat(totalTax.toFixed(2)),
+      TotalAmount: parseFloat(totalAmount.toFixed(2)),
+      TotalWeightKg: parseFloat(totalWeight.toFixed(2)),
+      ShopNameSnapshot: selectedShop.ShopName,
+      OwnerNameSnapshot: shopOwnerName,
+      PhoneSnapshot: shopPhone,
+      AddressSnapshot: shopAddress,
+      RouteSnapshot: shopRoute,
     };
-  }).filter(Boolean);
 
-  const subTotal = cartItemsList.reduce((sum, item) => sum + item.itemBaseTotal, 0);
-  const totalTaxAmount = cartItemsList.reduce((sum, item) => sum + item.itemTotalTax, 0);
-  const grandTotal = subTotal + totalTaxAmount;
-  const totalItemsCount = cartItemsList.reduce((sum, item) => sum + item.quantity, 0);
+    const { data: order, error: orderErr } = await supabase
+      .from('Orders')
+      .insert([orderPayload])
+      .select()
+      .single();
 
-  const handlePlaceCounterOrder = async () => {
-    if (!selectedShop) {
-      setErrorMessage('Please select a customer/retail store.');
-      return;
-    }
-    if (cartItemsList.length === 0) {
-      setErrorMessage('Cart is empty. Add at least one item.');
+    if (orderErr) {
+      setMessage(`Order Placement Failed: ${orderErr.message}`);
+      setSubmitting(false);
       return;
     }
 
-    setIsSubmitting(true);
-    setErrorMessage('');
-    setOrderSuccess(null);
+    // 2. Prepare and Insert OrderItems
+    const itemsDbPayload = cartItems.map((item) => {
+      const isKg = item.product.UomMaster?.UomCode === 'KG';
+      const itemSub = item.quantity * parseFloat(item.product.BasePrice || 0);
+      const taxRate = parseFloat(item.product.TaxSlabMaster?.TaxPercentage || 0) / 100;
+      const taxAmt = itemSub * taxRate;
+      const unitPrice = parseFloat(item.product.BasePrice || 0);
 
-    try {
-      const calculatedWeight = cartItemsList.reduce((sum, item) => sum + Number(item.quantity), 0);
-
-      const { data: newOrder, error: orderError } = await supabase
-        .from('Orders')
-        .insert([
-          {
-            ShopUserId: selectedShop.Users.UserId,
-            ShopNameSnapshot: selectedShop.ShopName,
-            OwnerNameSnapshot: selectedShop.OwnerName || selectedShop.ShopName,
-            PhoneSnapshot: selectedShop.Users.Phone,
-            RouteSnapshot: selectedShop.Route || 'Direct Dispatch',
-            AddressSnapshot: selectedShop.Address || 'Direct Dispatch',
-            TotalWeightKg: calculatedWeight.toFixed(2),
-            SubTotal: subTotal.toFixed(2),
-            TotalTaxAmount: totalTaxAmount.toFixed(2),
-            TotalAmount: grandTotal.toFixed(2),
-            PaymentId: selectedPaymentId,
-            OrderStatus: orderStatus,
-          },
-        ])
-        .select()
-        .single();
-
-      if (orderError || !newOrder) throw new Error(orderError?.message || 'Failed to initialize order.');
-
-      const orderItemsPayload = cartItemsList.map((item) => ({
-        OrderId: newOrder.OrderId,
+      return {
+        OrderId: order.OrderId,
         ProductId: item.product.ProductId,
         ProductNameSnapshot: item.product.ProductName,
-        Quantity: item.quantity,
-        WeightKg: Number(item.quantity).toFixed(2),
-        PricePerKgSnapshot: item.basePrice.toFixed(2),
-        UnitPriceSnapshot: item.basePrice.toFixed(2),
-        UomCodeSnapshot: item.product.UomMaster?.UomCode || 'KG',
-        TaxPercentageSnapshot: item.taxRate.toFixed(2),
-        CgstAmount: item.itemCgst.toFixed(2),
-        SgstAmount: item.itemSgst.toFixed(2),
-        LineTotal: item.itemLineTotal.toFixed(2),
-      }));
+        WeightKg: isKg ? parseFloat(item.quantity) : 0,
+        PricePerKgSnapshot: isKg ? unitPrice : 0,
+        Quantity: parseFloat(item.quantity),
+        UnitPriceSnapshot: unitPrice,
+        UomCodeSnapshot: item.product.UomMaster?.UomCode || 'Unit',
+        TaxPercentageSnapshot: parseFloat(item.product.TaxSlabMaster?.TaxPercentage || 0),
+        CgstAmount: parseFloat((taxAmt / 2).toFixed(2)),
+        SgstAmount: parseFloat((taxAmt / 2).toFixed(2)),
+        LineTotal: parseFloat((itemSub + taxAmt).toFixed(2)),
+      };
+    });
 
-      const { error: itemsError } = await supabase
-        .from('OrderItems')
-        .insert(orderItemsPayload);
+    const { error: itemsErr } = await supabase.from('OrderItems').insert(itemsDbPayload);
 
-      if (itemsError) throw new Error(itemsError.message);
-
+    if (itemsErr) {
+      setMessage(`Order created, but items failed: ${itemsErr.message}`);
+    } else {
+      setMessage(`✓ Order #${order.OrderId} placed successfully for ${selectedShop.ShopName}!`);
       setCart({});
-      setOrderSuccess(`Order #${newOrder.OrderId} created for "${selectedShop.ShopName}" [${selectedShop.ShopCode || 'SHP-' + selectedShop.ShopId}]! Bill: ₹${grandTotal.toFixed(2)}`);
-    } catch (err) {
-      setErrorMessage(`Billing Failed: ${err.message}`);
-    } finally {
-      setIsSubmitting(false);
     }
+    setSubmitting(false);
   };
 
   const filteredShops = shops.filter((s) => {
-    const q = customerSearch.toLowerCase();
-    const code = (s.ShopCode || `SHP-${s.ShopId}`).toLowerCase();
-    const name = s.ShopName.toLowerCase();
+    const q = shopSearchQuery.toLowerCase();
+    const code = (s.ShopCode || '').toLowerCase();
+    const name = (s.ShopName || '').toLowerCase();
     const owner = (s.OwnerName || '').toLowerCase();
-    const phone = (s.Users?.Phone || '').toLowerCase();
+    const phone = (s.Phone || s.Users?.Phone || '').toLowerCase();
     const route = (s.Route || '').toLowerCase();
-
     return code.includes(q) || name.includes(q) || owner.includes(q) || phone.includes(q) || route.includes(q);
   });
 
   const filteredProducts = products.filter((p) => {
-    const matchCat = selectedCategory === 'ALL' || p.CategoryId === parseInt(selectedCategory);
-    const matchSearch = p.ProductName.toLowerCase().includes(productSearch.toLowerCase());
-    return matchCat && matchSearch;
+    const matchesSearch = (p.ProductName || '')
+      .toLowerCase()
+      .includes(productSearchQuery.toLowerCase());
+    const matchesCategory =
+      selectedCategory === 'ALL' || String(p.CategoryId) === String(selectedCategory);
+    return matchesSearch && matchesCategory;
   });
 
   return (
-    <div className="max-w-7xl mx-auto space-y-5">
-      {/* Top Header & Search Toolbar */}
+    <div className="w-full max-w-7xl mx-auto space-y-4">
+      {message && (
+        <div className="p-3 bg-emerald-900 text-white text-xs rounded-xl flex items-center justify-between shadow-xs">
+          <span className="font-semibold">{message}</span>
+          <button type="button" onClick={() => setMessage('')} className="text-slate-300 hover:text-white cursor-pointer">✕</button>
+        </div>
+      )}
+
+      {/* TOP HEADER & SEARCH */}
       <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-extrabold text-slate-800">Direct Customer Billing (Counter / Tele Order)</h2>
-            <p className="text-xs text-slate-500">Quickly search shopkeepers by Shop Code (max 7 chars), Name, Phone, or Route</p>
+            <h2 className="text-sm sm:text-base font-extrabold text-slate-900">
+              Direct Customer Billing (Counter / Tele Order)
+            </h2>
+            <p className="text-xs text-slate-400 mt-0.5">
+              Quickly search shopkeepers by Shop Code (max 7 chars), Name, Phone, or Route
+            </p>
           </div>
 
-          {selectedShop && (
-            <div className="flex items-center gap-2 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-xl">
-              <span className="font-mono text-xs font-black text-emerald-800 bg-emerald-200/60 px-2 py-0.5 rounded">
-                {selectedShop.ShopCode || `SHP-${selectedShop.ShopId}`}
+          {selectedShop ? (
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-emerald-50 border border-emerald-200 rounded-xl text-xs font-semibold text-slate-800 shrink-0">
+              {selectedShop.ShopCode && (
+                <span className="px-1.5 py-0.5 bg-emerald-100 text-emerald-800 rounded font-mono text-[11px] font-bold">
+                  {selectedShop.ShopCode}
+                </span>
+              )}
+              <span className="font-bold">{selectedShop.ShopName}</span>
+              <span className="text-emerald-700 text-[11px]">
+                ({selectedShop.Route || 'Direct Route'})
               </span>
-              <span className="font-bold text-emerald-950 text-xs">{selectedShop.ShopName}</span>
-              <span className="text-[11px] text-emerald-700">({selectedShop.Route})</span>
             </div>
+          ) : (
+            <span className="px-3 py-1 bg-amber-50 text-amber-700 border border-amber-200 rounded-xl text-xs font-bold">
+              ⚠️ No Shop Selected
+            </span>
           )}
         </div>
 
-        {/* Customer Search Box */}
         <div className="relative">
-          <div className="flex items-center gap-2 bg-slate-50 border border-slate-300 rounded-xl px-3 py-2 focus-within:bg-white focus-within:border-slate-500 transition">
-            <Icons.Store className="w-4 h-4 text-slate-400 shrink-0" />
+          <div className="flex items-center gap-2 border border-slate-200 rounded-xl px-3.5 py-2.5 bg-slate-50/50 focus-within:bg-white focus-within:ring-2 focus-within:ring-slate-900/10 focus-within:border-slate-300 transition">
+            <span className="text-slate-400">🏪</span>
             <input
               type="text"
               placeholder="Search by Shop Code (e.g. SLM01), Shop Name, Owner, Phone or Route..."
-              value={customerSearch}
-              onFocus={() => setIsCustomerDropdownOpen(true)}
+              value={shopSearchQuery}
+              onFocus={() => setIsShopDropdownOpen(true)}
               onChange={(e) => {
-                setCustomerSearch(e.target.value);
-                setIsCustomerDropdownOpen(true);
+                setShopSearchQuery(e.target.value);
+                setIsShopDropdownOpen(true);
               }}
-              className="w-full bg-transparent text-xs font-semibold text-slate-800 focus:outline-none"
+              className="w-full text-xs text-slate-700 placeholder:text-slate-400 bg-transparent focus:outline-none"
             />
-            {customerSearch && (
+            {shopSearchQuery && (
               <button
                 type="button"
-                onClick={() => setCustomerSearch('')}
-                className="text-slate-400 hover:text-slate-700 cursor-pointer"
+                onClick={() => setShopSearchQuery('')}
+                className="text-xs text-slate-400 hover:text-slate-600 cursor-pointer"
               >
-                <Icons.Close className="w-3.5 h-3.5" />
+                ✕
               </button>
             )}
           </div>
 
-          {/* Interactive Customer Dropdown Results */}
-          {isCustomerDropdownOpen && (
+          {isShopDropdownOpen && (
             <>
-              <div
-                className="fixed inset-0 z-30"
-                onClick={() => setIsCustomerDropdownOpen(false)}
-              />
-              <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl max-h-64 overflow-y-auto divide-y divide-slate-100 z-40">
+              <div className="fixed inset-0 z-20" onClick={() => setIsShopDropdownOpen(false)} />
+              <div className="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-2xl shadow-xl z-30 max-h-64 overflow-y-auto divide-y divide-slate-100">
                 {filteredShops.length === 0 ? (
-                  <div className="p-4 text-center text-xs text-slate-400">
-                    No matching customer found.
+                  <div className="p-3 text-center text-xs text-slate-400">
+                    No matching associated shopkeepers found
                   </div>
                 ) : (
-                  filteredShops.map((s) => {
-                    const shopDisplayCode = s.ShopCode || `SHP-${s.ShopId}`;
-                    const isCurrent = selectedShop?.ShopId === s.ShopId;
-                    return (
-                      <div
-                        key={s.ShopId}
-                        onClick={() => {
-                          setSelectedShop(s);
-                          setIsCustomerDropdownOpen(false);
-                          setCustomerSearch('');
-                        }}
-                        className={`p-3 flex items-center justify-between cursor-pointer transition ${
-                          isCurrent ? 'bg-blue-50/80 font-bold' : 'hover:bg-slate-50'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <span className="font-mono text-xs font-black px-2 py-1 rounded-lg bg-slate-100 text-slate-800 border border-slate-200/80">
-                            {shopDisplayCode}
-                          </span>
-                          <div>
-                            <span className="text-xs text-slate-800 font-bold block">{s.ShopName}</span>
-                            <span className="text-[11px] text-slate-500 font-normal">
-                              {s.OwnerName || '-'} • 📞 {s.Users?.Phone}
+                  filteredShops.map((s) => (
+                    <div
+                      key={s.ShopId}
+                      onClick={() => handleSelectShop(s)}
+                      className={`p-3 text-xs flex items-center justify-between hover:bg-slate-50 cursor-pointer transition ${
+                        selectedShop?.ShopId === s.ShopId ? 'bg-emerald-50/60' : ''
+                      }`}
+                    >
+                      <div className="min-w-0 pr-2">
+                        <div className="flex items-center gap-2">
+                          {s.ShopCode && (
+                            <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 font-mono text-[10px] font-bold rounded">
+                              {s.ShopCode}
                             </span>
-                          </div>
+                          )}
+                          <span className="font-bold text-slate-800 truncate">{s.ShopName}</span>
                         </div>
-
-                        <span className="text-[10px] bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-semibold">
-                          {s.Route}
-                        </span>
+                        <p className="text-[11px] text-slate-400 mt-0.5 truncate">
+                          {s.OwnerName || 'Owner'} • {s.Phone || s.Users?.Phone || 'No Phone'}
+                        </p>
                       </div>
-                    );
-                  })
+                      <span className="text-[11px] font-medium text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100 shrink-0">
+                        {s.Route || 'Direct'}
+                      </span>
+                    </div>
+                  ))
                 )}
               </div>
             </>
@@ -328,133 +370,117 @@ export default function AgencyCounterOrder({ currentUser }) {
         </div>
       </div>
 
-      {orderSuccess && (
-        <div className="flex items-center justify-between p-3.5 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-800 text-xs font-medium">
-          <div className="flex items-center gap-2">
-            <Icons.Check className="w-4 h-4 text-emerald-600" />
-            <span>{orderSuccess}</span>
-          </div>
-          <button onClick={() => setOrderSuccess(null)} className="text-slate-400 hover:text-slate-700 cursor-pointer">
-            <Icons.Close className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      )}
+      {/* MAIN 2-COLUMN SECTION */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        {/* LEFT COLUMN: Products */}
+        <div className="lg:col-span-7 space-y-3">
+          <div className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+            <input
+              type="text"
+              placeholder="Search products by name..."
+              value={productSearchQuery}
+              onChange={(e) => setProductSearchQuery(e.target.value)}
+              className="w-full border border-slate-200 bg-slate-50/50 rounded-xl px-3.5 py-2 text-xs focus:bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+            />
 
-      {errorMessage && (
-        <div className="flex items-center gap-2 p-3.5 bg-rose-50 border border-rose-200 rounded-xl text-rose-700 text-xs font-medium">
-          <Icons.Alert className="w-4 h-4 text-rose-600" />
-          <span>{errorMessage}</span>
-        </div>
-      )}
-
-      {/* Main Split Grid: Left Catalog, Right Order Summary */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* LEFT COLUMN: PRODUCT SELECTION */}
-        <div className="lg:col-span-2 space-y-4">
-          <div className="bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
-            <div className="flex gap-2">
-              <input
-                type="text"
-                placeholder="Search products by name..."
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 focus:bg-white focus:outline-none transition"
-              />
-            </div>
-
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs">
               <button
                 type="button"
                 onClick={() => setSelectedCategory('ALL')}
-                className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition cursor-pointer ${
+                className={`px-3 py-1.5 rounded-xl font-bold transition whitespace-nowrap cursor-pointer ${
                   selectedCategory === 'ALL'
-                    ? 'bg-slate-900 text-white shadow-xs'
+                    ? 'bg-slate-950 text-white'
                     : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                 }`}
               >
                 All ({products.length})
               </button>
-              {categories.map((c) => (
-                <button
-                  type="button"
-                  key={c.CategoryId}
-                  onClick={() => setSelectedCategory(c.CategoryId)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-bold whitespace-nowrap transition cursor-pointer ${
-                    selectedCategory === c.CategoryId
-                      ? 'bg-slate-900 text-white shadow-xs'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {c.CategoryName}
-                </button>
-              ))}
+              {categories.map((c) => {
+                const count = products.filter((p) => p.CategoryId === c.CategoryId).length;
+                return (
+                  <button
+                    key={c.CategoryId}
+                    type="button"
+                    onClick={() => setSelectedCategory(c.CategoryId)}
+                    className={`px-3 py-1.5 rounded-xl font-semibold transition whitespace-nowrap cursor-pointer ${
+                      selectedCategory === c.CategoryId
+                        ? 'bg-slate-950 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    {c.CategoryName} {count > 0 && `(${count})`}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
-          {/* Product Items List */}
-          <div className="space-y-2.5 max-h-[560px] overflow-y-auto pr-1">
+          <div className="space-y-2">
             {loading ? (
-              <div className="bg-white p-12 rounded-2xl text-center text-xs text-slate-400">Loading catalog...</div>
+              <div className="py-12 text-center text-xs text-slate-400 bg-white rounded-2xl border border-slate-200/80">
+                Loading products...
+              </div>
             ) : filteredProducts.length === 0 ? (
-              <div className="bg-white p-12 rounded-2xl text-center text-xs text-slate-400">No products match search.</div>
+              <div className="py-12 text-center text-xs text-slate-400 bg-white rounded-2xl border border-slate-200/80">
+                No products found in this category.
+              </div>
             ) : (
-              filteredProducts.map((prod) => {
-                const qty = cart[prod.ProductId] || 0;
-                const uomCode = prod.UomMaster?.UomCode || 'KG';
-                const taxPct = prod.TaxSlabMaster?.TaxPercentage || 0;
-
+              filteredProducts.map((p) => {
+                const currentQty = cart[p.ProductId]?.quantity || 0;
                 return (
                   <div
-                    key={prod.ProductId}
-                    className="bg-white p-3.5 rounded-xl border border-slate-200/80 shadow-xs flex items-center justify-between hover:border-slate-300 transition"
+                    key={p.ProductId}
+                    className="bg-white p-3.5 rounded-2xl border border-slate-200/80 shadow-xs flex items-center justify-between gap-3 hover:border-slate-300 transition"
                   >
                     <div>
-                      <h4 className="font-bold text-slate-800 text-xs">{prod.ProductName}</h4>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-xs font-extrabold text-emerald-700">₹{prod.BasePrice}</span>
-                        <span className="text-[11px] text-slate-400">/ {uomCode}</span>
-                        <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-medium">
-                          GST {taxPct}%
+                      <h4 className="font-extrabold text-xs text-slate-800">{p.ProductName}</h4>
+                      <div className="flex items-center gap-2 mt-1">
+                        <span className="text-sm font-extrabold text-slate-900">
+                          ₹{p.BasePrice}{' '}
+                          <span className="text-[11px] font-normal text-slate-400 font-sans">
+                            / {p.UomMaster?.UomCode || 'Unit'}
+                          </span>
+                        </span>
+                        <span className="text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-100">
+                          GST {p.TaxSlabMaster ? `${p.TaxSlabMaster.TaxPercentage}%` : '0%'}
                         </span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-2">
-                      {qty === 0 ? (
+                    {currentQty === 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => updateQuantity(p, 1)}
+                        className="px-3.5 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-bold text-xs rounded-xl border border-emerald-200 transition cursor-pointer active:scale-95"
+                      >
+                        + Add
+                      </button>
+                    ) : (
+                      <div className="flex items-center gap-1.5">
                         <button
                           type="button"
-                          onClick={() => updateQuantity(prod.ProductId, 1)}
-                          className="flex items-center gap-1 px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 font-bold text-xs rounded-lg transition active:scale-95 cursor-pointer"
+                          onClick={() => updateQuantity(p, currentQty - 1)}
+                          className="w-7 h-7 rounded-lg bg-slate-100 hover:bg-slate-200 font-bold text-xs text-slate-700 flex items-center justify-center cursor-pointer select-none"
                         >
-                          <Icons.Plus className="w-3 h-3" />
-                          <span>Add</span>
+                          -
                         </button>
-                      ) : (
-                        <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200">
-                          <button
-                            type="button"
-                            onClick={() => updateQuantity(prod.ProductId, -1)}
-                            className="w-6 h-6 bg-white rounded shadow-xs flex items-center justify-center font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                          >
-                            <Icons.Minus className="w-2.5 h-2.5" />
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            value={qty}
-                            onChange={(e) => handleManualQuantity(prod.ProductId, e.target.value)}
-                            className="w-10 text-center bg-transparent font-bold text-xs text-slate-800 focus:outline-none"
-                          />
-                          <button
-                            type="button"
-                            onClick={() => updateQuantity(prod.ProductId, 1)}
-                            className="w-6 h-6 bg-white rounded shadow-xs flex items-center justify-center font-bold text-slate-700 hover:bg-slate-50 transition cursor-pointer"
-                          >
-                            <Icons.Plus className="w-2.5 h-2.5" />
-                          </button>
-                        </div>
-                      )}
-                    </div>
+                        <input
+                          type="number"
+                          step="any"
+                          min="0"
+                          value={currentQty}
+                          onChange={(e) => updateQuantity(p, e.target.value)}
+                          className="w-12 text-center font-bold text-xs border border-slate-200 rounded-lg py-1 focus:outline-none"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => updateQuantity(p, currentQty + 1)}
+                          className="w-7 h-7 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center justify-center cursor-pointer select-none"
+                        >
+                          +
+                        </button>
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -462,109 +488,104 @@ export default function AgencyCounterOrder({ currentUser }) {
           </div>
         </div>
 
-        {/* RIGHT COLUMN: ORDER INVOICE REVIEW & DISPATCH */}
-        <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs h-fit space-y-4">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="font-extrabold text-slate-800 text-sm">Order Summary</h3>
+        {/* RIGHT COLUMN: Order Summary */}
+        <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4 sticky top-20">
+          <div>
+            <h3 className="text-sm font-extrabold text-slate-900">Order Summary</h3>
             {selectedShop ? (
-              <p className="text-xs text-slate-500 mt-1">
-                Billed to: <strong className="text-slate-800">{selectedShop.ShopName}</strong>{' '}
-                <span className="font-mono text-[11px] bg-slate-100 px-1.5 py-0.5 rounded font-bold text-slate-700 border border-slate-200/80">
-                  {selectedShop.ShopCode || `SHP-${selectedShop.ShopId}`}
-                </span>{' '}
-                ({selectedShop.Route})
+              <p className="text-[11px] text-slate-500 mt-0.5 truncate">
+                Billed to:{' '}
+                <span className="font-bold text-slate-800">{selectedShop.ShopName}</span>{' '}
+                {selectedShop.ShopCode && (
+                  <span className="px-1 py-0.5 bg-slate-100 rounded text-[10px] font-mono text-slate-600 font-bold">
+                    {selectedShop.ShopCode}
+                  </span>
+                )}{' '}
+                <span className="text-emerald-700">
+                  ({selectedShop.Route || 'Direct Route'})
+                </span>
               </p>
             ) : (
-              <p className="text-xs text-rose-500 mt-0.5">Please select a customer above</p>
+              <p className="text-[11px] text-rose-500 mt-0.5 font-bold">
+                Please search & select a shop above to bill
+              </p>
             )}
           </div>
 
-          {/* Cart Itemized List */}
-          <div className="space-y-2 max-h-[260px] overflow-y-auto divide-y divide-slate-100 pr-1">
-            {cartItemsList.length === 0 ? (
-              <div className="py-8 text-center text-xs text-slate-400">Cart is empty. Select products from left.</div>
+          <div className="border border-slate-100 rounded-xl overflow-hidden min-h-[140px]">
+            {cartItems.length === 0 ? (
+              <div className="py-12 text-center text-xs text-slate-400">
+                Cart is empty. Select products from left.
+              </div>
             ) : (
-              cartItemsList.map((item) => (
-                <div key={item.product.ProductId} className="pt-2 flex justify-between items-center text-xs">
-                  <div>
-                    <span className="font-bold text-slate-800 block">{item.product.ProductName}</span>
-                    <span className="text-[11px] text-slate-400">
-                      ₹{item.basePrice} × {item.quantity} {item.product.UomMaster?.UomCode} (+GST {item.taxRate}%)
+              <div className="max-h-60 overflow-y-auto divide-y divide-slate-100">
+                {cartItems.map(({ product, quantity }) => (
+                  <div key={product.ProductId} className="p-3 flex items-center justify-between text-xs">
+                    <div className="min-w-0 pr-2">
+                      <p className="font-bold text-slate-800 truncate">{product.ProductName}</p>
+                      <span className="text-[10px] text-slate-400 font-mono">
+                        {quantity} {product.UomMaster?.UomCode || 'Unit'} × ₹{product.BasePrice}
+                      </span>
+                    </div>
+                    <span className="font-extrabold text-slate-900 whitespace-nowrap">
+                      ₹{(quantity * parseFloat(product.BasePrice)).toFixed(2)}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-bold text-slate-900 text-xs">₹{item.itemLineTotal.toFixed(2)}</span>
-                    <button
-                      type="button"
-                      onClick={() => updateQuantity(item.product.ProductId, -item.quantity)}
-                      className="text-slate-400 hover:text-rose-600 transition cursor-pointer"
-                    >
-                      <Icons.Close className="w-3 h-3" />
-                    </button>
-                  </div>
-                </div>
-              ))
+                ))}
+              </div>
             )}
           </div>
 
-          {/* Bill Calculation Details */}
-          <div className="pt-3 border-t border-slate-100 space-y-1.5 text-xs">
+          <div className="border-t border-slate-200 pt-3 space-y-2 text-xs">
             <div className="flex justify-between text-slate-500">
               <span>Items Count / Weight</span>
-              <span className="font-semibold text-slate-700">{totalItemsCount} units ({totalItemsCount} KG)</span>
+              <span className="font-mono font-bold text-slate-700">
+                {totalUnits} units ({totalWeight.toFixed(2)} KG)
+              </span>
             </div>
+
             <div className="flex justify-between text-slate-500">
-              <span>Taxable Base Subtotal</span>
-              <span>₹{subTotal.toFixed(2)}</span>
+              <span>Taxable Subtotal</span>
+              <span className="font-mono">₹{subtotal.toFixed(2)}</span>
             </div>
+
             <div className="flex justify-between text-slate-500">
-              <span>Total GST (CGST + SGST)</span>
-              <span>₹{totalTaxAmount.toFixed(2)}</span>
+              <span>Estimated GST</span>
+              <span className="font-mono text-emerald-700">+₹{totalTax.toFixed(2)}</span>
             </div>
-            <div className="flex justify-between text-sm font-extrabold text-slate-900 pt-2 border-t border-slate-100">
-              <span>Final Bill Amount</span>
-              <span className="text-emerald-700">₹{grandTotal.toFixed(2)}</span>
+
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">Payment Method</label>
+              <select
+                value={selectedPaymentId || ''}
+                onChange={(e) => setSelectedPaymentId(e.target.value)}
+                className="w-full border border-slate-200 bg-slate-50 rounded-xl px-2.5 py-1.5 text-xs focus:outline-none cursor-pointer"
+              >
+                {paymentMethods.length > 0 ? (
+                  paymentMethods.map((pm) => (
+                    <option key={pm.PaymentId || pm.PaymentMethodId} value={pm.PaymentId || pm.PaymentMethodId}>
+                      {pm.MethodName || pm.PaymentMethod || 'COD'}
+                    </option>
+                  ))
+                ) : (
+                  <option value={1}>Cash on Delivery (COD)</option>
+                )}
+              </select>
+            </div>
+
+            <div className="flex justify-between text-base font-extrabold text-slate-900 border-t border-slate-100 pt-2.5">
+              <span>Grand Total</span>
+              <span className="text-emerald-700">₹{totalAmount.toFixed(2)}</span>
             </div>
           </div>
 
-          {/* Payment & Order Status Control */}
-          <div className="grid grid-cols-2 gap-2 pt-2">
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Payment</label>
-              <select
-                value={selectedPaymentId}
-                onChange={(e) => setSelectedPaymentId(parseInt(e.target.value))}
-                className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
-              >
-                {paymentMethods.map((p) => (
-                  <option key={p.PaymentId} value={p.PaymentId}>
-                    {p.MethodName}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-[11px] font-semibold text-slate-500 mb-1">Initial Status</label>
-              <select
-                value={orderStatus}
-                onChange={(e) => setOrderStatus(e.target.value)}
-                className="w-full text-xs font-semibold bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 focus:outline-none cursor-pointer"
-              >
-                <option value="accepted">Accepted (Ready)</option>
-                <option value="ordered">Ordered (Pending)</option>
-              </select>
-            </div>
-          </div>
-
-          {/* Submit Button */}
           <button
             type="button"
-            onClick={handlePlaceCounterOrder}
-            disabled={isSubmitting || cartItemsList.length === 0}
-            className="w-full py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-bold rounded-xl text-xs shadow-md transition active:scale-95 disabled:opacity-50 flex items-center justify-center gap-2 cursor-pointer mt-2"
+            disabled={submitting || cartItems.length === 0 || !selectedShop}
+            onClick={handlePlaceOrder}
+            className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold rounded-xl text-xs transition active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
           >
-            <span>{isSubmitting ? 'Creating Order...' : `Confirm & Place Order (₹${grandTotal.toFixed(2)})`}</span>
-            <Icons.ArrowRight className="w-3.5 h-3.5" />
+            {submitting ? 'Placing Order...' : `Place Order (₹${totalAmount.toFixed(2)})`}
           </button>
         </div>
       </div>

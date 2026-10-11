@@ -1,354 +1,324 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 
-export default function AgencyProducts({ currentUser }) {
-  const [categories, setCategories] = useState([]);
+export default function AgencyProducts({ currentUser, selectedAgency }) {
   const [products, setProducts] = useState([]);
-  const [uomList, setUomList] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [uoms, setUoms] = useState([]);
   const [taxSlabs, setTaxSlabs] = useState([]);
-
-  // Category State (Add / Edit)
-  const [editingCategoryId, setEditingCategoryId] = useState(null);
-  const [catName, setCatName] = useState('');
-  const [catOrder, setCatOrder] = useState(0);
-
-  // Product State (Add / Edit)
-  const [editingProductId, setEditingProductId] = useState(null);
-  const [prodName, setProdName] = useState('');
-  const [selectedCatId, setSelectedCatId] = useState('');
-  const [selectedUomId, setSelectedUomId] = useState('');
-  const [selectedTaxId, setSelectedTaxId] = useState('');
-  const [basePrice, setBasePrice] = useState('');
-  const [isAvailable, setIsAvailable] = useState(true);
-  const [hsnCode, setHsnCode] = useState('');
-
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
 
+  // Category Form State
+  const [newCatName, setNewCatName] = useState('');
+  const [newCatOrder, setNewCatOrder] = useState('0');
+  const [catSubmitting, setCatSubmitting] = useState(false);
+
+  // Edit / Add Mode State
+  const [editingProduct, setEditingProduct] = useState(null);
+
+  // Form Fields State
+  const [productName, setProductName] = useState('');
+  const [categoryId, setCategoryId] = useState('');
+  const [uomId, setUomId] = useState('');
+  const [taxSlabId, setTaxSlabId] = useState('');
+  const [basePrice, setBasePrice] = useState('');
+  const [hsnCode, setHsnCode] = useState('');
+  const [isAvailable, setIsAvailable] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+
+  // Filters State for Product List
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCategory, setFilterCategory] = useState('ALL');
+  const [filterStatus, setFilterStatus] = useState('ALL');
+
   useEffect(() => {
-    loadAllData();
+    fetchMasters();
   }, []);
 
-  const loadAllData = async () => {
-    // 1. Fetch Categories
-    const { data: catData } = await supabase
-      .from('Categories')
-      .select('*')
-      .order('DisplayOrder', { ascending: true });
-    if (catData) setCategories(catData);
+  useEffect(() => {
+    if (selectedAgency?.AgencyId) {
+      fetchCategories();
+      fetchProducts();
+      resetForm();
+    }
+  }, [selectedAgency]);
 
-    // 2. Fetch Active UOMs
+  const fetchMasters = async () => {
     const { data: uomData } = await supabase
       .from('UomMaster')
       .select('*')
-      .eq('IsActive', true);
-    if (uomData) setUomList(uomData);
+      .order('UomId', { ascending: true });
+    if (uomData) setUoms(uomData);
 
-    // 3. Fetch Active Tax Slabs
     const { data: taxData } = await supabase
       .from('TaxSlabMaster')
       .select('*')
-      .eq('IsActive', true);
+      .order('TaxSlabId', { ascending: true });
     if (taxData) setTaxSlabs(taxData);
-
-    // 4. Fetch Products with joined relation
-    const { data: prodData } = await supabase
-      .from('Products')
-      .select(`
-        ProductId,
-        ProductName,
-        BasePrice,
-        IsAvailable,
-        HsnCode,
-        CategoryId,
-        UomId,
-        TaxSlabId,
-        Categories ( CategoryName ),
-        UomMaster ( UomCode ),
-        TaxSlabMaster ( SlabName, TaxPercentage )
-      `)
-      .order('ProductId', { ascending: false });
-    if (prodData) setProducts(prodData);
   };
 
-  // ---------------- CATEGORY HANDLERS ----------------
-  const selectCategoryForEdit = (cat) => {
-    setEditingCategoryId(cat.CategoryId);
-    setCatName(cat.CategoryName);
-    setCatOrder(cat.DisplayOrder || 0);
-    setMessage('');
+  const fetchCategories = async () => {
+    const { data } = await supabase
+      .from('Categories')
+      .select('*')
+      .eq('AgencyId', selectedAgency.AgencyId)
+      .order('CategoryId', { ascending: true });
+    if (data) setCategories(data);
   };
 
-  const cancelEditCategory = () => {
-    setEditingCategoryId(null);
-    setCatName('');
-    setCatOrder(0);
-  };
-
-  const handleSaveCategory = async (e) => {
-    e.preventDefault();
-    if (!catName.trim()) return;
-
+  const fetchProducts = async () => {
     setLoading(true);
     setMessage('');
+    const { data, error } = await supabase
+      .from('Products')
+      .select(`
+        *,
+        Categories ( CategoryName ),
+        UomMaster ( UomCode, UomName ),
+        TaxSlabMaster ( TaxPercentage, SlabName )
+      `)
+      .eq('AgencyId', selectedAgency.AgencyId)
+      .order('ProductId', { ascending: false });
 
-    if (editingCategoryId) {
-      // Update Category
-      const { error } = await supabase
-        .from('Categories')
-        .update({
-          CategoryName: catName.trim(),
-          DisplayOrder: parseInt(catOrder) || 0,
-        })
-        .eq('CategoryId', editingCategoryId);
-
-      if (error) {
-        setMessage(`Category Error: ${error.message}`);
-      } else {
-        cancelEditCategory();
-        setMessage('Category updated successfully!');
-        loadAllData();
-      }
-    } else {
-      // Add Category
-      const { error } = await supabase.from('Categories').insert([
-        {
-          CategoryName: catName.trim(),
-          DisplayOrder: parseInt(catOrder) || 0,
-          CreatedBy: currentUser?.UserId,
-        },
-      ]);
-
-      if (error) {
-        setMessage(`Category Error: ${error.message}`);
-      } else {
-        cancelEditCategory();
-        setMessage('Category added successfully!');
-        loadAllData();
-      }
+    if (error) {
+      setMessage(`Fetch Error: ${error.message}`);
+    } else if (data) {
+      setProducts(data);
     }
     setLoading(false);
   };
 
-  // ---------------- PRODUCT HANDLERS ----------------
-  const selectProductForEdit = (item) => {
-    setEditingProductId(item.ProductId);
-    setProdName(item.ProductName);
-    setSelectedCatId(item.CategoryId || '');
-    setSelectedUomId(item.UomId || '');
-    setSelectedTaxId(item.TaxSlabId || '');
-    setBasePrice(item.BasePrice);
-    setIsAvailable(item.IsAvailable !== false);
-    setHsnCode(item.HsnCode || '');
-    setMessage('');
+  const handleAddCategory = async (e) => {
+    e.preventDefault();
+    if (!newCatName.trim()) return;
+
+    setCatSubmitting(true);
+    const { data, error } = await supabase
+      .from('Categories')
+      .insert([
+        {
+          CategoryName: newCatName.trim(),
+          AgencyId: selectedAgency.AgencyId,
+        },
+      ])
+      .select()
+      .single();
+
+    if (!error && data) {
+      setCategories((prev) => [...prev, data]);
+      setNewCatName('');
+      setNewCatOrder('0');
+    } else {
+      setMessage(`Category Failed: ${error?.message}`);
+    }
+    setCatSubmitting(false);
   };
 
-  const cancelEditProduct = () => {
-    setEditingProductId(null);
-    setProdName('');
-    setSelectedCatId('');
-    setSelectedUomId('');
-    setSelectedTaxId('');
+  const handleSelectForEdit = (product) => {
+    setEditingProduct(product);
+    setProductName(product.ProductName || '');
+    setCategoryId(product.CategoryId ? String(product.CategoryId) : '');
+    setUomId(product.UomId ? String(product.UomId) : '');
+    setTaxSlabId(product.TaxSlabId ? String(product.TaxSlabId) : '');
+    setBasePrice(product.BasePrice !== null ? String(product.BasePrice) : '');
+    setHsnCode(product.HsnCode || '');
+    setIsAvailable(Boolean(product.IsAvailable));
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const resetForm = () => {
+    setEditingProduct(null);
+    setProductName('');
+    setCategoryId('');
+    setUomId('');
+    setTaxSlabId('');
     setBasePrice('');
-    setIsAvailable(true);
     setHsnCode('');
+    setIsAvailable(true);
   };
 
   const handleSaveProduct = async (e) => {
     e.preventDefault();
-    if (!prodName.trim() || !selectedCatId || !selectedUomId || !selectedTaxId || !basePrice) {
-      setMessage('Error: Please fill all required product fields');
+    if (!productName.trim() || !basePrice) {
+      setMessage('Product Name and Base Price are required.');
       return;
     }
 
-    setLoading(true);
+    setSubmitting(true);
     setMessage('');
 
-    const currentPriceNum = parseFloat(basePrice);
+    const payload = {
+      AgencyId: selectedAgency.AgencyId,
+      CategoryId: categoryId ? parseInt(categoryId, 10) : null,
+      ProductName: productName.trim(),
+      HsnCode: hsnCode.trim() || null,
+      BasePrice: parseFloat(basePrice),
+      UomId: uomId ? parseInt(uomId, 10) : null,
+      TaxSlabId: taxSlabId ? parseInt(taxSlabId, 10) : null,
+      IsAvailable: isAvailable,
+      DisplayOrder: 0,
+    };
 
-    if (editingProductId) {
-      const oldProd = products.find((p) => p.ProductId === editingProductId);
-      const oldPriceNum = parseFloat(oldProd?.BasePrice || 0);
-
-      const { error: updateError } = await supabase
+    if (editingProduct) {
+      const { data, error } = await supabase
         .from('Products')
-        .update({
-          ProductName: prodName.trim(),
-          CategoryId: selectedCatId,
-          UomId: selectedUomId,
-          TaxSlabId: selectedTaxId,
-          BasePrice: currentPriceNum,
-          IsAvailable: isAvailable,
-          HsnCode: hsnCode.trim() || null,
-          UpdatedBy: currentUser?.UserId,
-          UpdatedAt: new Date().toISOString(),
-        })
-        .eq('ProductId', editingProductId);
+        .update(payload)
+        .eq('ProductId', editingProduct.ProductId)
+        .select(`
+          *,
+          Categories ( CategoryName ),
+          UomMaster ( UomCode, UomName ),
+          TaxSlabMaster ( TaxPercentage, SlabName )
+        `)
+        .single();
 
-      if (updateError) {
-        setMessage(`Error: ${updateError.message}`);
-      } else {
-        if (oldPriceNum !== currentPriceNum) {
-          await supabase.from('ProductPriceLogs').insert([
-            {
-              ProductId: editingProductId,
-              OldBasePrice: oldPriceNum,
-              NewBasePrice: currentPriceNum,
-              ChangedBy: currentUser?.UserId,
-            },
-          ]);
-        }
-        cancelEditProduct();
+      if (error) {
+        setMessage(`Failed to update product: ${error.message}`);
+      } else if (data) {
+        setProducts((prev) =>
+          prev.map((p) => (p.ProductId === editingProduct.ProductId ? data : p))
+        );
         setMessage('Product updated successfully!');
-        loadAllData();
+        resetForm();
       }
     } else {
-      const { error: insertError } = await supabase.from('Products').insert([
-        {
-          ProductName: prodName.trim(),
-          CategoryId: selectedCatId,
-          UomId: selectedUomId,
-          TaxSlabId: selectedTaxId,
-          BasePrice: currentPriceNum,
-          IsAvailable: isAvailable,
-          HsnCode: hsnCode.trim() || null,
-          UpdatedBy: currentUser?.UserId,
-        },
-      ]);
+      const { data, error } = await supabase
+        .from('Products')
+        .insert([payload])
+        .select(`
+          *,
+          Categories ( CategoryName ),
+          UomMaster ( UomCode, UomName ),
+          TaxSlabMaster ( TaxPercentage, SlabName )
+        `)
+        .single();
 
-      if (insertError) {
-        setMessage(`Error: ${insertError.message}`);
-      } else {
-        cancelEditProduct();
-        setMessage('Product added to catalog!');
-        loadAllData();
+      if (error) {
+        setMessage(`Failed to add product: ${error.message}`);
+      } else if (data) {
+        setProducts((prev) => [data, ...prev]);
+        setMessage('Product added successfully!');
+        resetForm();
       }
     }
-    setLoading(false);
+    setSubmitting(false);
   };
 
+  const filteredProducts = products.filter((p) => {
+    const matchesSearch =
+      (p.ProductName || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (p.HsnCode || '').toLowerCase().includes(searchQuery.toLowerCase());
+
+    const matchesCategory =
+      filterCategory === 'ALL' || String(p.CategoryId) === String(filterCategory);
+
+    const matchesStatus =
+      filterStatus === 'ALL' ||
+      (filterStatus === 'ACTIVE' && p.IsAvailable) ||
+      (filterStatus === 'INACTIVE' && !p.IsAvailable);
+
+    return matchesSearch && matchesCategory && matchesStatus;
+  });
+
   return (
-    <div className="w-full max-w-6xl mx-auto space-y-5">
-      {/* Category Management Bar */}
-      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <div>
-            <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              {editingCategoryId ? 'Edit Category' : 'Manage Categories'}
-            </h3>
-            <p className="text-[11px] text-slate-400">Click any category badge below to edit its name or order</p>
-          </div>
-          {editingCategoryId && (
-            <span className="text-xs bg-amber-50 text-amber-700 border border-amber-200 px-2.5 py-0.5 rounded-full font-medium w-fit">
-              Editing mode active
-            </span>
-          )}
-        </div>
-
-        {/* Category Add/Edit Form */}
-        <form onSubmit={handleSaveCategory} className="flex flex-wrap items-center gap-2.5">
-          <input
-            type="text"
-            placeholder="Category Name (e.g. Rice, Dhall, Spices)"
-            value={catName}
-            onChange={(e) => setCatName(e.target.value)}
-            className="flex-1 min-w-[200px] px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
-            required
-          />
-          <input
-            type="number"
-            placeholder="Order"
-            title="Display priority order"
-            value={catOrder}
-            onChange={(e) => setCatOrder(e.target.value)}
-            className="w-20 px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
-          />
-          <button
-            type="submit"
-            disabled={loading}
-            className="py-2 px-4 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-xl transition disabled:opacity-50 cursor-pointer"
-          >
-            {loading ? 'Saving...' : editingCategoryId ? 'Update Category' : '+ Add Category'}
-          </button>
-          {editingCategoryId && (
-            <button
-              type="button"
-              onClick={cancelEditCategory}
-              className="py-2 px-3 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
-            >
-              Cancel
-            </button>
-          )}
-        </form>
-
-        {/* Clickable Category Chips */}
-        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100">
-          {categories.map((c) => {
-            const isSelected = editingCategoryId === c.CategoryId;
-            return (
-              <button
-                key={c.CategoryId}
-                type="button"
-                onClick={() => selectCategoryForEdit(c)}
-                className={`px-3 py-1 text-xs rounded-xl font-medium transition cursor-pointer flex items-center gap-1.5 ${
-                  isSelected
-                    ? 'bg-emerald-600 text-white shadow-xs ring-2 ring-emerald-400 ring-offset-1'
-                    : 'bg-slate-100 text-slate-700 hover:bg-slate-200 border border-slate-200'
-                }`}
-              >
-                <span>{c.CategoryName}</span>
-                <span className={`text-[10px] ${isSelected ? 'text-emerald-100' : 'text-slate-400'}`}>
-                  #{c.DisplayOrder || 0}
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
+    <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-6">
       {message && (
-        <div
-          className={`p-3 text-xs rounded-xl font-medium border ${
-            message.startsWith('Error') || message.startsWith('Category Error')
-              ? 'bg-rose-50 text-rose-600 border-rose-200'
-              : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-          }`}
-        >
-          {message}
+        <div className="p-3 bg-slate-900 text-white text-xs rounded-xl flex items-center justify-between shadow-xs">
+          <span>{message}</span>
+          <button type="button" onClick={() => setMessage('')} className="text-slate-400 hover:text-white">✕</button>
         </div>
       )}
 
-      {/* Main Grid: Product Form + Products List */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 items-start">
-        {/* Product Form Card */}
-        <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs h-fit">
-          <h3 className="text-sm font-bold text-slate-800 mb-1">
-            {editingProductId ? 'Edit Product Rate & Specs' : 'Add New Product'}
-          </h3>
-          <p className="text-[11px] text-slate-400 mb-4">
-            {editingProductId ? 'Modify pricing, UOM or tax slab below' : 'Register wholesale item to catalog'}
-          </p>
+      {/* 1. TOP CATEGORY BAR */}
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+        <form onSubmit={handleAddCategory} className="flex flex-col sm:flex-row items-center gap-2.5">
+          <input
+            type="text"
+            required
+            placeholder="Category Name (e.g. Rice, Dhall, Spices)"
+            value={newCatName}
+            onChange={(e) => setNewCatName(e.target.value)}
+            className="flex-1 w-full border border-slate-300 rounded-xl px-4 py-2.5 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+          />
+          <input
+            type="number"
+            value={newCatOrder}
+            onChange={(e) => setNewCatOrder(e.target.value)}
+            className="w-full sm:w-16 border border-slate-300 rounded-xl px-3 py-2.5 text-xs text-center text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
+          />
+          <button
+            type="submit"
+            disabled={catSubmitting}
+            className="w-full sm:w-auto px-5 py-2.5 bg-slate-950 hover:bg-slate-800 text-white font-bold text-xs rounded-xl whitespace-nowrap transition cursor-pointer disabled:opacity-50"
+          >
+            {catSubmitting ? 'Adding...' : '+ Add Category'}
+          </button>
+        </form>
 
-          <form onSubmit={handleSaveProduct} className="space-y-3">
+        <div className="flex flex-wrap items-center gap-2 pt-1">
+          {categories.length === 0 ? (
+            <span className="text-[11px] text-slate-400 italic">No categories created yet.</span>
+          ) : (
+            categories.map((cat, idx) => (
+              <span
+                key={cat.CategoryId}
+                className="inline-flex items-center gap-1.5 px-3 py-1 bg-slate-100/90 text-slate-600 rounded-lg text-xs font-medium"
+              >
+                <span>{cat.CategoryName}</span>
+                <span className="text-slate-400 text-[10px]">#{idx}</span>
+              </span>
+            ))
+          )}
+        </div>
+      </div>
+
+      {/* 2. MAIN 2-COLUMN SECTION */}
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+        
+        {/* LEFT COLUMN: Add / Edit Product Form (Includes Availability Toggle) */}
+        <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4 sticky top-20">
+          <div className="flex items-center justify-between">
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Product Name *</label>
+              <h3 className="text-sm font-extrabold text-slate-900">
+                {editingProduct ? `Edit Product #${editingProduct.ProductId}` : 'Add New Product'}
+              </h3>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {editingProduct
+                  ? 'Update rates, availability, or catalog specs'
+                  : 'Register wholesale item to catalog'}
+              </p>
+            </div>
+            {editingProduct && (
+              <button
+                type="button"
+                onClick={resetForm}
+                className="text-[11px] font-bold text-rose-600 hover:text-rose-700 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200 cursor-pointer"
+              >
+                Cancel Edit
+              </button>
+            )}
+          </div>
+
+          <form onSubmit={handleSaveProduct} className="space-y-3.5 text-xs">
+            <div>
+              <label className="block font-semibold text-slate-700 mb-1">Product Name *</label>
               <input
                 type="text"
-                placeholder="e.g. Ponni Boiled Rice (Deluxe)"
-                value={prodName}
-                onChange={(e) => setProdName(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
                 required
+                placeholder="e.g. Ponni Boiled Rice (Deluxe)"
+                value={productName}
+                onChange={(e) => setProductName(e.target.value)}
+                className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-slate-600 mb-1">Category *</label>
+              <label className="block font-semibold text-slate-700 mb-1">Category *</label>
               <select
-                value={selectedCatId}
-                onChange={(e) => setSelectedCatId(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
-                required
+                value={categoryId}
+                onChange={(e) => setCategoryId(e.target.value)}
+                className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 cursor-pointer"
               >
                 <option value="">-- Select Category --</option>
                 {categories.map((c) => (
@@ -361,15 +331,14 @@ export default function AgencyProducts({ currentUser }) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">UOM Unit *</label>
+                <label className="block font-semibold text-slate-700 mb-1">UOM Unit *</label>
                 <select
-                  value={selectedUomId}
-                  onChange={(e) => setSelectedUomId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
-                  required
+                  value={uomId}
+                  onChange={(e) => setUomId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 cursor-pointer"
                 >
                   <option value="">-- Unit --</option>
-                  {uomList.map((u) => (
+                  {uoms.map((u) => (
                     <option key={u.UomId} value={u.UomId}>
                       {u.UomCode} ({u.UomName})
                     </option>
@@ -378,17 +347,16 @@ export default function AgencyProducts({ currentUser }) {
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">GST Slab *</label>
+                <label className="block font-semibold text-slate-700 mb-1">GST Slab *</label>
                 <select
-                  value={selectedTaxId}
-                  onChange={(e) => setSelectedTaxId(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none cursor-pointer"
-                  required
+                  value={taxSlabId}
+                  onChange={(e) => setTaxSlabId(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs text-slate-700 bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 cursor-pointer"
                 >
                   <option value="">-- Tax Slab --</option>
                   {taxSlabs.map((t) => (
                     <option key={t.TaxSlabId} value={t.TaxSlabId}>
-                      {t.SlabName} ({t.TaxPercentage}%)
+                      {t.SlabName || `${t.TaxPercentage}%`} ({t.TaxPercentage}%)
                     </option>
                   ))}
                 </select>
@@ -397,43 +365,41 @@ export default function AgencyProducts({ currentUser }) {
 
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">Base Price (₹) *</label>
+                <label className="block font-semibold text-slate-700 mb-1">Base Price (₹) *</label>
                 <input
                   type="number"
                   step="0.01"
+                  required
                   placeholder="e.g. 54.00"
                   value={basePrice}
                   onChange={(e) => setBasePrice(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
-                  required
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-700 font-mono placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-600 mb-1">HSN Code</label>
+                <label className="block font-semibold text-slate-700 mb-1">HSN Code</label>
                 <input
                   type="text"
                   placeholder="e.g. 1006"
                   value={hsnCode}
                   onChange={(e) => setHsnCode(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 focus:outline-none"
+                  className="w-full border border-slate-300 rounded-xl px-3.5 py-2 text-xs text-slate-700 font-mono placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                 />
               </div>
             </div>
 
-            {/* Availability Switch */}
-            <div className="flex items-center justify-between py-2 border-t border-slate-100">
+            {/* iOS Green Toggle Switch in Form */}
+            <div className="flex items-center justify-between pt-2">
               <div>
-                <span className="text-xs font-semibold text-slate-700 block">Stock Availability</span>
-                <span className="text-[11px] text-slate-400">
-                  {isAvailable ? 'Shops can place orders' : 'Marked as Out of Stock'}
-                </span>
+                <span className="block font-semibold text-slate-800 text-xs">Stock Availability</span>
+                <span className="block text-[11px] text-slate-400">Shops can place orders</span>
               </div>
               <button
                 type="button"
                 role="switch"
                 aria-checked={isAvailable}
-                onClick={() => setIsAvailable(!isAvailable)}
+                onClick={() => setIsAvailable((prev) => !prev)}
                 className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
                   isAvailable ? 'bg-emerald-600' : 'bg-slate-300'
                 }`}
@@ -446,110 +412,154 @@ export default function AgencyProducts({ currentUser }) {
               </button>
             </div>
 
-            <div className="flex gap-2 pt-2">
-              <button
-                type="submit"
-                disabled={loading}
-                className="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs rounded-xl shadow-xs transition disabled:opacity-50 cursor-pointer"
-              >
-                {loading ? 'Saving...' : editingProductId ? 'Update Product' : '+ Add Product'}
-              </button>
-              {editingProductId && (
-                <button
-                  type="button"
-                  onClick={cancelEditProduct}
-                  className="px-3 py-2 bg-slate-200 hover:bg-slate-300 text-slate-700 text-xs font-semibold rounded-xl transition cursor-pointer"
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
+            <button
+              type="submit"
+              disabled={submitting}
+              className={`w-full py-2.5 mt-2 text-white font-bold rounded-xl text-xs transition active:scale-95 shadow-sm cursor-pointer disabled:opacity-50 ${
+                editingProduct ? 'bg-slate-900 hover:bg-slate-800' : 'bg-emerald-600 hover:bg-emerald-500'
+              }`}
+            >
+              {submitting
+                ? 'Saving...'
+                : editingProduct
+                ? 'Update Product'
+                : '+ Add Product'}
+            </button>
           </form>
         </div>
 
-        {/* Product Catalog Responsive List */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
-          <div className="p-4 border-b border-slate-100 flex items-center justify-between">
-            <div>
-              <h3 className="font-extrabold text-xs uppercase tracking-wider text-slate-800">
-                Agency Product Catalog
-              </h3>
-              <p className="text-[11px] text-slate-400">Click any card to edit rates or specs</p>
+        {/* RIGHT COLUMN: Agency Product Catalog (Clean List Grid without Toggle) */}
+        <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+          {/* Header & Filter Controls */}
+          <div className="p-4 border-b border-slate-100 space-y-3">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="text-xs font-extrabold uppercase tracking-wider text-slate-900">
+                  Agency Product Catalog
+                </h3>
+                <p className="text-[11px] text-slate-400 mt-0.5">Click any record to edit rates or specs</p>
+              </div>
+              <span className="px-2.5 py-1 bg-slate-100 rounded-lg text-xs font-bold text-slate-600">
+                Total: {filteredProducts.length}
+              </span>
             </div>
-            <span className="text-xs font-bold bg-slate-100 text-slate-600 px-2.5 py-1 rounded-xl">
-              Total: {products.length}
-            </span>
+
+            {/* Filter Row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 pt-1 text-xs">
+              <input
+                type="text"
+                placeholder="🔍 Search name / HSN..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full border border-slate-200 bg-slate-50 rounded-xl px-3 py-1.5 text-xs focus:bg-white focus:outline-none"
+              />
+
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="w-full border border-slate-200 bg-slate-50 rounded-xl px-2 py-1.5 text-xs focus:bg-white focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">All Categories</option>
+                {categories.map((c) => (
+                  <option key={c.CategoryId} value={c.CategoryId}>
+                    {c.CategoryName}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="w-full border border-slate-200 bg-slate-50 rounded-xl px-2 py-1.5 text-xs focus:bg-white focus:outline-none cursor-pointer"
+              >
+                <option value="ALL">All Status</option>
+                <option value="ACTIVE">Available Only</option>
+                <option value="INACTIVE">Out of Stock Only</option>
+              </select>
+            </div>
           </div>
 
-          <div className="divide-y divide-slate-100">
-            {products.length === 0 ? (
-              <div className="py-12 text-center text-xs text-slate-400">
-                No products added yet. Use the form to register wholesale items.
-              </div>
-            ) : (
-              products.map((p) => {
-                const isOutOfStock = p.IsAvailable === false;
-                const categoryName = p.Categories?.CategoryName;
-                const uomCode = p.UomMaster?.UomCode || 'PCS';
-                const taxPercent = p.TaxSlabMaster?.TaxPercentage ?? 0;
+          {/* List Table Grid (Clean Status Badge Only) */}
+          <div className="w-full overflow-x-auto">
+            <table className="w-full text-left text-xs border-collapse">
+              <thead className="bg-slate-50/75 border-b border-slate-200/80 text-slate-500 uppercase font-bold text-[10px]">
+                <tr>
+                  <th className="py-2.5 px-3">Product Name</th>
+                  <th className="py-2.5 px-3">Category</th>
+                  <th className="py-2.5 px-3 text-right">Price</th>
+                  <th className="py-2.5 px-3 text-right">GST</th>
+                  <th className="py-2.5 px-3 text-center">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {loading ? (
+                  <tr>
+                    <td colSpan="5" className="py-12 text-center text-xs text-slate-400">Loading catalog...</td>
+                  </tr>
+                ) : filteredProducts.length === 0 ? (
+                  <tr>
+                    <td colSpan="5" className="py-12 text-center text-xs text-slate-400">
+                      No matching products found.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredProducts.map((p) => {
+                    const isSelected = editingProduct?.ProductId === p.ProductId;
 
-                return (
-                  <div
-                    key={p.ProductId}
-                    onClick={() => selectProductForEdit(p)}
-                    className="p-3.5 sm:p-4 hover:bg-slate-50/80 transition cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-3 active:bg-slate-100/70"
-                  >
-                    {/* Left: Product Name, Category & GST */}
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="font-bold text-xs sm:text-sm text-slate-900 leading-tight">
-                          {p.ProductName}
-                        </span>
-                        {categoryName && (
-                          <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md whitespace-nowrap">
-                            {categoryName}
-                          </span>
-                        )}
-                      </div>
-
-                      <div className="flex items-center gap-2 mt-1 text-[11px] text-slate-400">
-                        <span>Tax: GST {taxPercent}%</span>
-                        {p.HsnCode && (
-                          <>
-                            <span>•</span>
-                            <span className="font-mono">HSN: {p.HsnCode}</span>
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Right: Price & Stock Badge */}
-                    <div className="flex items-center justify-between sm:justify-end gap-3.5 pt-1.5 sm:pt-0 border-t border-slate-100/60 sm:border-0 shrink-0">
-                      <div className="sm:text-right">
-                        <div className="text-sm font-extrabold text-emerald-700 leading-tight">
-                          ₹{p.BasePrice}
-                        </div>
-                        <div className="text-[10px] text-slate-400 font-medium">
-                          per {uomCode}
-                        </div>
-                      </div>
-
-                      <span
-                        className={`text-[10px] font-bold px-2.5 py-1 rounded-full whitespace-nowrap shrink-0 border ${
-                          isOutOfStock
-                            ? 'bg-rose-50 text-rose-700 border-rose-200'
-                            : 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    return (
+                      <tr
+                        key={p.ProductId}
+                        onClick={() => handleSelectForEdit(p)}
+                        className={`transition cursor-pointer select-none ${
+                          isSelected
+                            ? 'bg-emerald-50/70 border-l-4 border-l-emerald-600'
+                            : 'hover:bg-slate-50/80'
                         }`}
                       >
-                        {isOutOfStock ? 'Out of Stock' : 'In Stock'}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+                        <td className="py-3 px-3">
+                          <span className="font-bold text-slate-800 block truncate max-w-[180px]">
+                            {p.ProductName}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            {p.HsnCode ? `HSN ${p.HsnCode}` : `ID: #${p.ProductId}`}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3 text-slate-600 truncate max-w-[120px]">
+                          {p.Categories?.CategoryName || '-'}
+                        </td>
+
+                        <td className="py-3 px-3 text-right font-extrabold text-slate-900 whitespace-nowrap">
+                          ₹{p.BasePrice}
+                          <span className="text-[10px] font-normal text-slate-400 block">
+                            /{p.UomMaster?.UomCode || 'Unit'}
+                          </span>
+                        </td>
+
+                        <td className="py-3 px-3 text-right font-medium text-emerald-700 whitespace-nowrap">
+                          {p.TaxSlabMaster ? `${p.TaxSlabMaster.TaxPercentage}%` : '0%'}
+                        </td>
+
+                        <td className="py-3 px-3 text-center whitespace-nowrap">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                              p.IsAvailable
+                                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                : 'bg-slate-100 text-slate-500 border-slate-200'
+                            }`}
+                          >
+                            {p.IsAvailable ? 'Available' : 'Out of Stock'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
+
       </div>
     </div>
   );

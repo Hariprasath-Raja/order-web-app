@@ -49,3 +49,23 @@ select:disabled,
 .cursor-not-allowed * {
   cursor: not-allowed !important;
 }
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 5mm;
+  }
+  body * {
+    visibility: hidden;
+  }
+  .printable-area, .printable-area * {
+    visibility: visible;
+  }
+  .printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+  }
+}

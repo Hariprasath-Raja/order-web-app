@@ -1,653 +1,723 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
-import { Icons } from './Icons';
 
-export default function AgencyUsers() {
-  const [activeSubTab, setActiveSubTab] = useState('shops');
-  const [roles, setRoles] = useState([]);
-  const [shopsList, setShopsList] = useState([]);
+export default function AgencyUsers({ currentUser, selectedAgency }) {
+  // 3 Primary Sub Tabs
+  const [activeTab, setActiveTab] = useState('RETAIL_SHOPS'); // 'ASSOCIATION' | 'RETAIL_SHOPS' | 'STAFF'
+
+  // Master Data States
+  const [allRegisteredShops, setAllRegisteredShops] = useState([]);
+  const [associatedShops, setAssociatedShops] = useState([]);
   const [staffList, setStaffList] = useState([]);
+
+  // Common UI State
   const [loading, setLoading] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [message, setMessage] = useState({ text: '', type: '' });
+  const [submitting, setSubmitting] = useState(false);
+  const [message, setMessage] = useState('');
 
-  const [editingShopId, setEditingShopId] = useState(null);
-  const [editingStaffId, setEditingStaffId] = useState(null);
+  // TAB 1: ASSOCIATION STATE
+  const [selectedShopToLink, setSelectedShopToLink] = useState('');
+  const [creditLimit, setCreditLimit] = useState('0');
+  const [assocSearch, setAssocSearch] = useState('');
 
-  const [shopForm, setShopForm] = useState({
-    userId: null,
-    shopCode: '',
-    phone: '',
-    password: '',
-    shopName: '',
-    ownerName: '',
-    route: '',
-    address: '',
-    gstNumber: '',
-    isActive: true,
-  });
+  // TAB 2: RETAIL SHOPS FORM STATE (Edit & Create)
+  const [editingShop, setEditingShop] = useState(null);
+  const [shopCode, setShopCode] = useState('');
+  const [shopName, setShopName] = useState('');
+  const [ownerName, setOwnerName] = useState('');
+  const [shopPhone, setShopPhone] = useState('');
+  const [shopPassword, setShopPassword] = useState('1234');
+  const [dispatchRoute, setDispatchRoute] = useState('');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [gstin, setGstin] = useState('');
+  const [shopIsActive, setShopIsActive] = useState(true);
 
-  const [staffForm, setStaffForm] = useState({
-    userId: null,
-    phone: '',
-    password: '',
-    staffName: '',
-    designation: '',
-    roleId: '',
-    isActive: true,
-  });
+  // TAB 3: STAFF FORM STATE
+  const [editingStaff, setEditingStaff] = useState(null);
+  const [staffName, setStaffName] = useState('');
+  const [staffPhone, setStaffPhone] = useState('');
+  const [staffPassword, setStaffPassword] = useState('123456');
+  const [staffDesignation, setStaffDesignation] = useState('');
+  const [staffRole, setStaffRole] = useState(1); // 1: AgencyAdmin, 2: Staff
+  const [staffIsActive, setStaffIsActive] = useState(true);
 
   useEffect(() => {
-    fetchInitialData();
+    fetchAllShops();
+    fetchStaff();
   }, []);
 
-  const fetchInitialData = async () => {
-    setLoading(true);
-    const { data: rolesData } = await supabase.from('Roles').select('*');
-    if (rolesData) {
-      setRoles(rolesData);
-      const staffRole = rolesData.find((r) => r.RoleName === 'AgencyStaff') || rolesData[0];
-      if (staffRole) setStaffForm((prev) => ({ ...prev, roleId: staffRole.RoleId }));
+  useEffect(() => {
+    if (selectedAgency?.AgencyId) {
+      fetchAssociatedShops();
     }
+  }, [selectedAgency]);
 
-    await fetchShops();
-    await fetchStaff();
+  const fetchAllShops = async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from('ShopDetails')
+      .select('*, Users ( UserId, Phone, Password, IsActive )')
+      .order('ShopId', { ascending: false });
+
+    if (data) setAllRegisteredShops(data);
     setLoading(false);
   };
 
-  const fetchShops = async () => {
-    setIsRefreshing(true);
-    const { data } = await supabase
-      .from('ShopDetails')
-      .select(`
-        ShopId,
-        ShopCode,
-        ShopName,
-        OwnerName,
-        Route,
-        Address,
-        GstNumber,
-        Users ( UserId, Phone, IsActive )
-      `)
-      .order('ShopId', { ascending: false });
-    if (data) setShopsList(data);
-    setIsRefreshing(false);
+  const fetchAssociatedShops = async () => {
+    if (!selectedAgency?.AgencyId) return;
+    const { data, error } = await supabase
+      .from('AgencyShopMapping')
+      .select('*, ShopDetails ( * )')
+      .eq('AgencyId', selectedAgency.AgencyId)
+      .order('MappingId', { ascending: false });
+
+    if (!error && data) setAssociatedShops(data);
   };
 
   const fetchStaff = async () => {
-    setIsRefreshing(true);
     const { data } = await supabase
-      .from('AgencyStaffDetails')
-      .select(`
-        StaffId,
-        StaffName,
-        Designation,
-        Users ( 
-          UserId, 
-          Phone, 
-          IsActive,
-          RoleId,
-          Roles ( RoleName )
-        )
-      `)
-      .order('StaffId', { ascending: false });
+      .from('Users')
+      .select('*')
+      .in('RoleId', [1, 2])
+      .order('CreatedAt', { ascending: false });
+
     if (data) setStaffList(data);
-    setIsRefreshing(false);
+  };
+
+  // -------------------------------------------------------------
+  // TAB 1 ACTIONS: ASSOCIATION
+  // -------------------------------------------------------------
+  const handleLinkShop = async (e) => {
+    e.preventDefault();
+    if (!selectedShopToLink || !selectedAgency?.AgencyId) return;
+
+    setSubmitting(true);
+    setMessage('');
+
+    const newMapping = {
+      AgencyId: selectedAgency.AgencyId,
+      ShopId: parseInt(selectedShopToLink, 10),
+      IsApproved: true,
+      CreditLimit: parseFloat(creditLimit) || 0,
+      OutstandingBalance: 0,
+    };
+
+    const { data, error } = await supabase
+      .from('AgencyShopMapping')
+      .insert([newMapping])
+      .select('*, ShopDetails ( * )')
+      .single();
+
+    if (error) {
+      setMessage(`Linking Failed: ${error.message}`);
+    } else if (data) {
+      setAssociatedShops((prev) => [data, ...prev]);
+      setSelectedShopToLink('');
+      setCreditLimit('0');
+      setMessage('Shop associated to agency successfully!');
+    }
+    setSubmitting(false);
+  };
+
+  const handleToggleAssocStatus = async (mapping) => {
+    const nextStatus = !mapping.IsApproved;
+    const { error } = await supabase
+      .from('AgencyShopMapping')
+      .update({ IsApproved: nextStatus })
+      .eq('MappingId', mapping.MappingId);
+
+    if (!error) {
+      setAssociatedShops((prev) =>
+        prev.map((m) =>
+          m.MappingId === mapping.MappingId ? { ...m, IsApproved: nextStatus } : m
+        )
+      );
+    }
+  };
+
+  const handleRemoveAssoc = async (mappingId) => {
+    if (!window.confirm('Are you sure you want to unlink this shop from this agency?')) return;
+    const { error } = await supabase
+      .from('AgencyShopMapping')
+      .delete()
+      .eq('MappingId', mappingId);
+
+    if (!error) {
+      setAssociatedShops((prev) => prev.filter((m) => m.MappingId !== mappingId));
+      setMessage('Association removed.');
+    }
+  };
+
+  // -------------------------------------------------------------
+  // TAB 2 ACTIONS: RETAIL SHOPS CRUD
+  // -------------------------------------------------------------
+  const loadShopIntoEditor = (shop) => {
+    setEditingShop(shop);
+    setShopCode(shop.ShopCode || '');
+    setShopName(shop.ShopName || '');
+    setOwnerName(shop.OwnerName || '');
+    setShopPhone(shop.Users?.Phone || shop.Phone || '');
+    setShopPassword(shop.Users?.Password || '••••••');
+    setDispatchRoute(shop.Route || '');
+    setDeliveryAddress(shop.Address || '');
+    setGstin(shop.GstNumber || '');
+    setShopIsActive(shop.Users?.IsActive ?? true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const resetShopForm = () => {
-    setEditingShopId(null);
-    setShopForm({
-      userId: null,
-      shopCode: '',
-      phone: '',
-      password: '',
-      shopName: '',
-      ownerName: '',
-      route: '',
-      address: '',
-      gstNumber: '',
-      isActive: true,
-    });
+    setEditingShop(null);
+    setShopCode('');
+    setShopName('');
+    setOwnerName('');
+    setShopPhone('');
+    setShopPassword('1234');
+    setDispatchRoute('');
+    setDeliveryAddress('');
+    setGstin('');
+    setShopIsActive(true);
   };
 
-  const resetStaffForm = () => {
-    setEditingStaffId(null);
-    const staffRole = roles.find((r) => r.RoleName === 'AgencyStaff') || roles[0];
-    setStaffForm({
-      userId: null,
-      phone: '',
-      password: '',
-      staffName: '',
-      designation: '',
-      roleId: staffRole ? staffRole.RoleId : '',
-      isActive: true,
-    });
-  };
-
-  const startEditShop = (shop) => {
-    setEditingShopId(shop.ShopId);
-    setShopForm({
-      userId: shop.Users?.UserId,
-      shopCode: shop.ShopCode || '',
-      phone: shop.Users?.Phone || '',
-      password: '••••••••',
-      shopName: shop.ShopName || '',
-      ownerName: shop.OwnerName || '',
-      route: shop.Route || '',
-      address: shop.Address || '',
-      gstNumber: shop.GstNumber || '',
-      isActive: shop.Users?.IsActive ?? true,
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const startEditStaff = (staff) => {
-    setEditingStaffId(staff.StaffId);
-    setStaffForm({
-      userId: staff.Users?.UserId,
-      phone: staff.Users?.Phone || '',
-      password: '••••••••',
-      staffName: staff.StaffName || '',
-      designation: staff.Designation || '',
-      roleId: staff.Users?.RoleId || (roles[0]?.RoleId ?? ''),
-      isActive: staff.Users?.IsActive ?? true,
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
-
-  const handleSaveShop = async (e) => {
+  const handleSaveShopkeeper = async (e) => {
     e.preventDefault();
-    setMessage({ text: '', type: '' });
-
-    const formattedCode = shopForm.shopCode.trim().toUpperCase().replace(/\s/g, '');
-
-    if (!formattedCode || !shopForm.phone || (!editingShopId && !shopForm.password) || !shopForm.shopName || !shopForm.route || !shopForm.address) {
-      setMessage({ text: 'Please fill all mandatory fields (Shop Code, Phone, Shop, Route, Address)', type: 'error' });
+    if (!shopName.trim() || !shopPhone.trim()) {
+      setMessage('Shop Name and Phone number are required.');
       return;
     }
 
-    if (formattedCode.length > 7) {
-      setMessage({ text: 'Shop Code must be 7 characters or less', type: 'error' });
-      return;
-    }
+    setSubmitting(true);
+    setMessage('');
 
     try {
-      if (editingShopId) {
-        const { error: userError } = await supabase
-          .from('Users')
-          .update({
-            Phone: shopForm.phone.trim(),
-            IsActive: shopForm.isActive,
-          })
-          .eq('UserId', shopForm.userId);
+      if (editingShop) {
+        if (editingShop.UserId) {
+          const userUpdatePayload = {
+            Phone: shopPhone.trim(),
+            FullName: ownerName.trim() || shopName.trim(),
+            IsActive: shopIsActive,
+          };
+          if (shopPassword && shopPassword !== '••••••') {
+            userUpdatePayload.Password = shopPassword.trim();
+          }
 
-        if (userError) throw userError;
+          await supabase
+            .from('Users')
+            .update(userUpdatePayload)
+            .eq('UserId', editingShop.UserId);
+        }
 
-        const { error: shopError } = await supabase
+        const shopUpdatePayload = {
+          ShopName: shopName.trim(),
+          OwnerName: ownerName.trim() || null,
+          ShopCode: shopCode.trim().toUpperCase() || null,
+          Address: deliveryAddress.trim() || null,
+          Route: dispatchRoute.trim() || null,
+          GstNumber: gstin.trim() || null,
+        };
+
+        const { data: updatedShop, error: shopErr } = await supabase
           .from('ShopDetails')
-          .update({
-            ShopCode: formattedCode,
-            ShopName: shopForm.shopName.trim(),
-            OwnerName: shopForm.ownerName.trim() || shopForm.shopName.trim(),
-            Route: shopForm.route.trim(),
-            Address: shopForm.address.trim(),
-            GstNumber: shopForm.gstNumber.trim() || null,
-          })
-          .eq('ShopId', editingShopId);
+          .update(shopUpdatePayload)
+          .eq('ShopId', editingShop.ShopId)
+          .select('*, Users ( UserId, Phone, Password, IsActive, FullName )')
+          .single();
 
-        if (shopError) throw shopError;
+        if (shopErr) throw shopErr;
 
-        setMessage({ text: `Shop "${shopForm.shopName}" (${formattedCode}) updated successfully!`, type: 'success' });
+        setAllRegisteredShops((prev) =>
+          prev.map((s) => (s.ShopId === editingShop.ShopId ? updatedShop : s))
+        );
+        setMessage(`Shop "${updatedShop.ShopName}" updated successfully!`);
         resetShopForm();
       } else {
-        const shopRole = roles.find((r) => r.RoleName === 'ShopOwner');
-        if (!shopRole) throw new Error('ShopOwner role not found in database');
+        const userPayload = {
+          Phone: shopPhone.trim(),
+          Password: shopPassword.trim() || shopPhone.trim().slice(-4) || '1234',
+          FullName: ownerName.trim() || shopName.trim(),
+          RoleId: 3,
+          IsActive: shopIsActive,
+          CreatedBy: currentUser?.UserId || null,
+        };
 
-        const { data: newUser, error: userError } = await supabase
+        const { data: newUser, error: userErr } = await supabase
           .from('Users')
-          .insert([
-            {
-              Phone: shopForm.phone.trim(),
-              Password: shopForm.password.trim(),
-              RoleId: shopRole.RoleId,
-              IsActive: shopForm.isActive,
-            },
-          ])
+          .insert([userPayload])
           .select()
           .single();
 
-        if (userError) throw userError;
+        if (userErr) throw userErr;
 
-        const { error: shopError } = await supabase
+        const shopPayload = {
+          UserId: newUser.UserId,
+          ShopName: shopName.trim(),
+          OwnerName: ownerName.trim() || null,
+          ShopCode: shopCode.trim().toUpperCase() || null,
+          Address: deliveryAddress.trim() || null,
+          Route: dispatchRoute.trim() || null,
+          GstNumber: gstin.trim() || null,
+        };
+
+        const { data: newShop, error: shopErr } = await supabase
           .from('ShopDetails')
-          .insert([
-            {
-              UserId: newUser.UserId,
-              ShopCode: formattedCode,
-              ShopName: shopForm.shopName.trim(),
-              OwnerName: shopForm.ownerName.trim() || shopForm.shopName.trim(),
-              Route: shopForm.route.trim(),
-              Address: shopForm.address.trim(),
-              GstNumber: shopForm.gstNumber.trim() || null,
-            },
-          ]);
+          .insert([shopPayload])
+          .select('*, Users ( UserId, Phone, Password, IsActive, FullName )')
+          .single();
 
-        if (shopError) throw shopError;
+        if (shopErr) throw shopErr;
 
-        setMessage({ text: `Shop "${shopForm.shopName}" registered with code [${formattedCode}]!`, type: 'success' });
+        if (selectedAgency?.AgencyId) {
+          const { data: mappingData } = await supabase
+            .from('AgencyShopMapping')
+            .insert([
+              {
+                AgencyId: selectedAgency.AgencyId,
+                ShopId: newShop.ShopId,
+                IsApproved: true,
+                CreditLimit: 0,
+              },
+            ])
+            .select('*, ShopDetails ( * )')
+            .single();
+
+          if (mappingData) setAssociatedShops((prev) => [mappingData, ...prev]);
+        }
+
+        setAllRegisteredShops((prev) => [newShop, ...prev]);
+        setMessage(`Shop "${newShop.ShopName}" registered successfully!`);
         resetShopForm();
       }
-      fetchShops();
     } catch (err) {
-      if (err.message?.includes('duplicate key') || err.message?.includes('shopdetails_shopcode_unique') || err.message?.includes('ShopCode')) {
-        setMessage({ text: `Shop Code "${formattedCode}" is already taken! Please choose another unique code.`, type: 'error' });
-      } else {
-        setMessage({ text: `Action Failed: ${err.message}`, type: 'error' });
-      }
+      setMessage(`Operation failed: ${err.message}`);
     }
+    setSubmitting(false);
+  };
+
+  // -------------------------------------------------------------
+  // TAB 3 ACTIONS: AGENCY STAFF CRUD (FullName & Designation)
+  // -------------------------------------------------------------
+  const loadStaffIntoEditor = (st) => {
+    setEditingStaff(st);
+    setStaffName(st.FullName || '');
+    setStaffPhone(st.Phone || '');
+    setStaffPassword(st.Password || '••••••');
+    setStaffDesignation(st.Designation || '');
+    setStaffRole(st.RoleId || 1);
+    setStaffIsActive(st.IsActive ?? true);
+  };
+
+  const resetStaffForm = () => {
+    setEditingStaff(null);
+    setStaffName('');
+    setStaffPhone('');
+    setStaffPassword('123456');
+    setStaffDesignation('');
+    setStaffRole(1);
+    setStaffIsActive(true);
   };
 
   const handleSaveStaff = async (e) => {
     e.preventDefault();
-    setMessage({ text: '', type: '' });
-
-    if (!staffForm.phone || (!editingStaffId && !staffForm.password) || !staffForm.staffName) {
-      setMessage({ text: 'Please fill Staff Name, Phone, and Password', type: 'error' });
+    if (!staffPhone.trim()) {
+      setMessage('Mobile Number is required.');
       return;
     }
 
+    setSubmitting(true);
+    setMessage('');
+
     try {
-      if (editingStaffId) {
-        const { error: userError } = await supabase
+      if (editingStaff) {
+        const updatePayload = {
+          Phone: staffPhone.trim(),
+          FullName: staffName.trim() || null,
+          Designation: staffDesignation.trim() || null,
+          RoleId: parseInt(staffRole, 10),
+          IsActive: staffIsActive,
+        };
+        if (staffPassword && staffPassword !== '••••••') {
+          updatePayload.Password = staffPassword.trim();
+        }
+
+        const { data: updated, error } = await supabase
           .from('Users')
-          .update({
-            Phone: staffForm.phone.trim(),
-            RoleId: parseInt(staffForm.roleId),
-            IsActive: staffForm.isActive,
-          })
-          .eq('UserId', staffForm.userId);
-
-        if (userError) throw userError;
-
-        const { error: staffError } = await supabase
-          .from('AgencyStaffDetails')
-          .update({
-            StaffName: staffForm.staffName.trim(),
-            Designation: staffForm.designation.trim() || 'Staff',
-          })
-          .eq('StaffId', editingStaffId);
-
-        if (staffError) throw staffError;
-
-        setMessage({ text: `Staff "${staffForm.staffName}" updated successfully!`, type: 'success' });
-        resetStaffForm();
-      } else {
-        const { data: newUser, error: userError } = await supabase
-          .from('Users')
-          .insert([
-            {
-              Phone: staffForm.phone.trim(),
-              Password: staffForm.password.trim(),
-              RoleId: parseInt(staffForm.roleId),
-              IsActive: staffForm.isActive,
-            },
-          ])
+          .update(updatePayload)
+          .eq('UserId', editingStaff.UserId)
           .select()
           .single();
 
-        if (userError) throw userError;
+        if (error) throw error;
+        setStaffList((prev) =>
+          prev.map((s) => (s.UserId === editingStaff.UserId ? updated : s))
+        );
+        setMessage(`Staff account "${updated.FullName || updated.Phone}" updated!`);
+        resetStaffForm();
+      } else {
+        const staffPayload = {
+          Phone: staffPhone.trim(),
+          Password: staffPassword.trim() || '123456',
+          FullName: staffName.trim() || null,
+          Designation: staffDesignation.trim() || null,
+          RoleId: parseInt(staffRole, 10),
+          IsActive: staffIsActive,
+          CreatedBy: currentUser?.UserId || null,
+        };
 
-        const { error: staffError } = await supabase
-          .from('AgencyStaffDetails')
-          .insert([
-            {
-              UserId: newUser.UserId,
-              StaffName: staffForm.staffName.trim(),
-              Designation: staffForm.designation.trim() || 'Staff',
-            },
-          ]);
+        const { data, error } = await supabase
+          .from('Users')
+          .insert([staffPayload])
+          .select()
+          .single();
 
-        if (staffError) throw staffError;
-
-        setMessage({ text: `Staff "${staffForm.staffName}" created successfully!`, type: 'success' });
+        if (error) throw error;
+        setStaffList((prev) => [data, ...prev]);
+        setMessage(`Staff account "${data.FullName || data.Phone}" created!`);
         resetStaffForm();
       }
-      fetchStaff();
     } catch (err) {
-      setMessage({ text: `Action Failed: ${err.message}`, type: 'error' });
+      setMessage(`Staff error: ${err.message}`);
     }
+    setSubmitting(false);
   };
 
+  // Associated Filter
+  const alreadyMappedShopIds = new Set(associatedShops.map((m) => m.ShopId));
+  const availableShopsToLink = allRegisteredShops.filter(
+    (s) => !alreadyMappedShopIds.has(s.ShopId)
+  );
+
+  const filteredAssocShops = associatedShops.filter((m) => {
+    const q = assocSearch.toLowerCase();
+    const name = (m.ShopDetails?.ShopName || '').toLowerCase();
+    const code = (m.ShopDetails?.ShopCode || '').toLowerCase();
+    const route = (m.ShopDetails?.Route || '').toLowerCase();
+    return name.includes(q) || code.includes(q) || route.includes(q);
+  });
+
   return (
-    <div className="max-w-6xl mx-auto space-y-6">
-      {/* Tab Switcher Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-4 rounded-2xl border border-slate-200/80 shadow-xs">
+    <div className="w-full max-w-7xl mx-auto space-y-4 sm:space-y-5">
+      {/* Top Banner Header */}
+      <div className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/80 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-base font-extrabold text-slate-800">User & Party Management</h2>
-          <p className="text-xs text-slate-500">Configure retail accounts with custom 7-char Shop Codes & agency personnel</p>
+          <h2 className="text-base sm:text-lg font-extrabold text-slate-900">
+            User & Party Management
+          </h2>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Configure retail accounts with custom 7-char Shop Codes & agency personnel
+          </p>
         </div>
 
-        <div className="flex bg-slate-100/80 p-1 rounded-xl border border-slate-200">
+        {/* 3 Clear Sub Tabs */}
+        <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-xl text-xs font-bold">
           <button
             type="button"
-            onClick={() => {
-              setActiveSubTab('shops');
-              resetShopForm();
-              setMessage({ text: '', type: '' });
-            }}
-            className={`flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'shops'
+            onClick={() => setActiveTab('RETAIL_SHOPS')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition cursor-pointer ${
+              activeTab === 'RETAIL_SHOPS'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Icons.Store />
-            <span>Retail Shops</span>
-            <span className="ml-1 px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[10px] rounded-md font-semibold">
-              {shopsList.length}
+            <span>🏪 Retail Shops</span>
+            <span className="px-1.5 py-0.2 bg-slate-200 text-slate-700 rounded-md text-[10px]">
+              {allRegisteredShops.length}
             </span>
           </button>
+
           <button
             type="button"
-            onClick={() => {
-              setActiveSubTab('staff');
-              resetStaffForm();
-              setMessage({ text: '', type: '' });
-            }}
-            className={`flex items-center gap-2 px-4 py-1.5 text-xs font-bold rounded-lg transition-all cursor-pointer ${
-              activeSubTab === 'staff'
+            onClick={() => setActiveTab('ASSOCIATION')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition cursor-pointer ${
+              activeTab === 'ASSOCIATION'
                 ? 'bg-white text-slate-900 shadow-xs'
                 : 'text-slate-600 hover:text-slate-900'
             }`}
           >
-            <Icons.Parties />
-            <span>Agency Staff</span>
-            <span className="ml-1 px-1.5 py-0.2 bg-slate-200/80 text-slate-700 text-[10px] rounded-md font-semibold">
+            <span>🔗 Agency Association</span>
+            <span className="px-1.5 py-0.2 bg-slate-200 text-slate-700 rounded-md text-[10px]">
+              {associatedShops.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('STAFF')}
+            className={`flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg transition cursor-pointer ${
+              activeTab === 'STAFF'
+                ? 'bg-white text-slate-900 shadow-xs'
+                : 'text-slate-600 hover:text-slate-900'
+            }`}
+          >
+            <span>👥 Agency Staff</span>
+            <span className="px-1.5 py-0.2 bg-slate-200 text-slate-700 rounded-md text-[10px]">
               {staffList.length}
             </span>
           </button>
         </div>
       </div>
 
-      {message.text && (
-        <div
-          className={`flex items-center gap-2 p-3.5 text-xs rounded-xl font-medium border ${
-            message.type === 'success'
-              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-              : 'bg-rose-50 text-rose-800 border-rose-200'
-          }`}
-        >
-          {message.type === 'success' ? <Icons.Check /> : <Icons.Close />}
-          <span>{message.text}</span>
+      {message && (
+        <div className="p-3 bg-slate-900 text-white text-xs rounded-xl flex items-center justify-between shadow-xs">
+          <span>{message}</span>
+          <button type="button" onClick={() => setMessage('')} className="text-slate-400 hover:text-white">✕</button>
         </div>
       )}
 
-      {/* SUB-SECTION 1: SHOPS MANAGEMENT */}
-      {activeSubTab === 'shops' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Shop Form Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs h-fit">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
-                  {editingShopId ? <Icons.Edit /> : <Icons.UserPlus />}
-                </span>
-                <h3 className="text-xs font-bold tracking-wide uppercase text-slate-700">
-                  {editingShopId ? 'Edit Shopkeeper' : 'Register New Shop'}
-                </h3>
-              </div>
-
-              {editingShopId && (
+      {/* ============================================================= */}
+      {/* 1. RETAIL SHOPS TAB */}
+      {/* ============================================================= */}
+      {activeTab === 'RETAIL_SHOPS' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <span>{editingShop ? '📝 EDIT SHOPKEEPER' : '➕ ADD SHOPKEEPER'}</span>
+              </h3>
+              {editingShop && (
                 <button
                   type="button"
                   onClick={resetShopForm}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer"
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg cursor-pointer"
                 >
-                  <Icons.Close />
-                  <span>Cancel</span>
+                  ✕ Cancel
                 </button>
               )}
             </div>
 
-            <form onSubmit={handleSaveShop} className="space-y-3.5 text-xs">
-              <div className="grid grid-cols-3 gap-2">
-                <div className="col-span-1">
-                  <label className="block text-slate-600 font-semibold mb-1">
+            <form onSubmit={handleSaveShopkeeper} className="space-y-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                <div className="sm:col-span-4">
+                  <label className="block font-bold text-slate-700 mb-1">
                     Code * <span className="text-[10px] text-slate-400 font-normal">(Max 7)</span>
                   </label>
                   <input
                     type="text"
-                    maxLength="7"
-                    placeholder="SLM01"
-                    value={shopForm.shopCode}
-                    onChange={(e) =>
-                      setShopForm({
-                        ...shopForm,
-                        shopCode: e.target.value.toUpperCase().replace(/\s/g, ''),
-                      })
-                    }
-                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-2.5 py-2 text-slate-800 font-mono font-bold uppercase focus:bg-white focus:border-slate-400 focus:outline-none transition"
-                    required
+                    maxLength={7}
+                    placeholder="SLM03"
+                    value={shopCode}
+                    onChange={(e) => setShopCode(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono uppercase focus:outline-none"
                   />
                 </div>
-                <div className="col-span-2">
-                  <label className="block text-slate-600 font-semibold mb-1">Shop Name *</label>
+
+                <div className="sm:col-span-8">
+                  <label className="block font-bold text-slate-700 mb-1">Shop Name *</label>
                   <input
                     type="text"
-                    placeholder="e.g. Annai Maligai"
-                    value={shopForm.shopName}
-                    onChange={(e) => setShopForm({ ...shopForm, shopName: e.target.value })}
-                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition"
                     required
+                    placeholder="Sri Makkal Maligai"
+                    value={shopName}
+                    onChange={(e) => setShopName(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Owner Name</label>
+                <label className="block font-bold text-slate-700 mb-1">Owner Name</label>
                 <input
                   type="text"
-                  placeholder="e.g. Senthil Kumar"
-                  value={shopForm.ownerName}
-                  onChange={(e) => setShopForm({ ...shopForm, ownerName: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition"
+                  placeholder="Gnanvel"
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-2.5">
+              <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">Phone (Login) *</label>
+                  <label className="block font-bold text-slate-700 mb-1">Phone (Login) *</label>
                   <input
-                    type="text"
-                    maxLength="10"
-                    placeholder="10 digits"
-                    value={shopForm.phone}
-                    onChange={(e) => setShopForm({ ...shopForm, phone: e.target.value })}
-                    className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition font-mono"
+                    type="tel"
                     required
+                    placeholder="9600560425"
+                    value={shopPhone}
+                    onChange={(e) => setShopPhone(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
                   />
                 </div>
+
                 <div>
-                  <label className="block text-slate-600 font-semibold mb-1">
-                    Password {editingShopId ? '(Secured)' : '*'}
-                  </label>
+                  <label className="block font-bold text-slate-700 mb-1">Password (Secured) *</label>
                   <input
                     type="text"
-                    disabled={!!editingShopId}
-                    placeholder="Min 6 chars"
-                    value={shopForm.password}
-                    onChange={(e) => setShopForm({ ...shopForm, password: e.target.value })}
-                    className={`w-full border rounded-xl px-3 py-2 focus:outline-none font-mono transition ${
-                      editingShopId
-                        ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed select-none'
-                        : 'bg-slate-50/50 text-slate-800 border-slate-200 focus:bg-white focus:border-slate-400'
-                    }`}
-                    required={!editingShopId}
+                    required
+                    placeholder="1234"
+                    value={shopPassword}
+                    onChange={(e) => setShopPassword(e.target.value)}
+                    className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Dispatch Route *</label>
+                <label className="block font-bold text-slate-700 mb-1">Dispatch Route *</label>
                 <input
                   type="text"
-                  placeholder="e.g. Salem Town / Attur Main Rd"
-                  value={shopForm.route}
-                  onChange={(e) => setShopForm({ ...shopForm, route: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition"
                   required
+                  placeholder="Tharamangalam"
+                  value={dispatchRoute}
+                  onChange={(e) => setDispatchRoute(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Delivery Address *</label>
+                <label className="block font-bold text-slate-700 mb-1">Delivery Address *</label>
                 <textarea
-                  rows="2"
-                  placeholder="Door No, Street name, landmark"
-                  value={shopForm.address}
-                  onChange={(e) => setShopForm({ ...shopForm, address: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition resize-none"
+                  rows={2}
                   required
+                  placeholder="Bus stand Opposite, Tharamangalam"
+                  value={deliveryAddress}
+                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">GSTIN (Optional)</label>
+                <label className="block font-bold text-slate-700 mb-1">GSTIN (Optional)</label>
                 <input
                   type="text"
-                  placeholder="15-digit GST number"
-                  value={shopForm.gstNumber}
-                  onChange={(e) => setShopForm({ ...shopForm, gstNumber: e.target.value.toUpperCase() })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none uppercase font-mono tracking-wider transition"
+                  placeholder="33AAA91829122GST"
+                  value={gstin}
+                  onChange={(e) => setGstin(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono uppercase focus:outline-none"
                 />
               </div>
 
-              {/* IN-FORM ACTIVE SWITCH */}
-              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+              <div className="flex items-center justify-between pt-2">
                 <div>
-                  <span className="font-semibold text-slate-700 block">Account Status</span>
-                  <span className="text-[11px] text-slate-500">
-                    {shopForm.isActive ? 'Active (Ready to order)' : 'Inactive (Access blocked)'}
+                  <span className="block font-bold text-slate-800 text-xs">Account Status</span>
+                  <span className="block text-[11px] text-slate-400">
+                    {shopIsActive ? 'Active (Ready to order)' : 'Disabled / Suspended'}
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShopForm((prev) => ({ ...prev, isActive: !prev.isActive }))}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer ${
-                    shopForm.isActive ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
+                  role="switch"
+                  aria-checked={shopIsActive}
+                  onClick={() => setShopIsActive((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    shopIsActive ? 'bg-emerald-600' : 'bg-slate-300'
                   }`}
                 >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-xs transform" />
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      shopIsActive ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
                 </button>
               </div>
 
               <button
                 type="submit"
-                className={`w-full py-2.5 text-white font-bold rounded-xl shadow-xs transition active:scale-95 cursor-pointer ${
-                  editingShopId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-900 hover:bg-slate-800'
-                }`}
+                disabled={submitting}
+                className="w-full py-2.5 mt-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
               >
-                {editingShopId ? 'Update Shopkeeper Details' : 'Create Shopkeeper Account'}
+                {submitting
+                  ? 'Saving...'
+                  : editingShop
+                  ? 'Update Shopkeeper'
+                  : '+ Register Shopkeeper'}
               </button>
             </form>
           </div>
 
-          {/* Shops Table Card with ShopCode Badge */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">Enrolled Retail Stores</h3>
-                <p className="text-[11px] text-slate-400">Click any row to load into editor</p>
+                <h4 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                  Enrolled Retail Stores
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">Click any row to load into editor</p>
               </div>
               <button
                 type="button"
-                onClick={fetchShops}
-                disabled={isRefreshing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                onClick={fetchAllShops}
+                className="flex items-center gap-1 px-3 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 cursor-pointer"
               >
-                <span className={isRefreshing ? 'animate-spin' : ''}>
-                  <Icons.Refresh />
-                </span>
-                <span>Refresh</span>
+                🔄 Refresh
               </button>
             </div>
 
-            <div className="overflow-x-auto flex-1">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-50/75 border-b border-slate-200/80 text-slate-500 uppercase font-bold text-[10px]">
                   <tr>
-                    <th className="py-3 px-4">Code & Shop</th>
-                    <th className="py-3 px-4">Route & Address</th>
-                    <th className="py-3 px-4">Contact</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center w-12"></th>
+                    <th className="py-2.5 px-3">CODE & SHOP</th>
+                    <th className="py-2.5 px-3">ROUTE & ADDRESS</th>
+                    <th className="py-2.5 px-3">CONTACT</th>
+                    <th className="py-2.5 px-3 text-center">STATUS</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {shopsList.length === 0 ? (
+                  {loading ? (
                     <tr>
-                      <td colSpan="5" className="py-12 text-center text-slate-400">
-                        No shops registered yet.
-                      </td>
+                      <td colSpan="4" className="py-12 text-center text-xs text-slate-400">Loading enrolled stores...</td>
+                    </tr>
+                  ) : allRegisteredShops.length === 0 ? (
+                    <tr>
+                      <td colSpan="4" className="py-12 text-center text-xs text-slate-400">No retail stores enrolled yet.</td>
                     </tr>
                   ) : (
-                    shopsList.map((s) => {
-                      const isSelected = editingShopId === s.ShopId;
+                    allRegisteredShops.map((s) => {
+                      const isSelected = editingShop?.ShopId === s.ShopId;
+                      const user = s.Users;
+                      const isActive = user?.IsActive ?? true;
+
                       return (
                         <tr
                           key={s.ShopId}
-                          onClick={() => startEditShop(s)}
-                          className={`group cursor-pointer transition select-none ${
+                          onClick={() => loadShopIntoEditor(s)}
+                          className={`cursor-pointer transition ${
                             isSelected
-                              ? 'bg-blue-50/80 ring-2 ring-inset ring-blue-500/50'
+                              ? 'bg-emerald-50/80 border-l-4 border-l-emerald-600'
                               : 'hover:bg-slate-50/70'
                           }`}
                         >
-                          <td className="py-3 px-4">
+                          <td className="py-3 px-3">
                             <div className="flex items-center gap-2">
-                              <span className="font-mono text-[11px] font-bold px-2 py-0.5 rounded bg-slate-100 text-slate-700 border border-slate-200/80">
-                                {s.ShopCode || `S-${s.ShopId}`}
-                              </span>
-                              <span className="font-bold text-slate-800">{s.ShopName}</span>
+                              {s.ShopCode && (
+                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-800 font-mono text-[10px] font-bold rounded">
+                                  {s.ShopCode}
+                                </span>
+                              )}
+                              <span className="font-bold text-slate-900">{s.ShopName}</span>
                             </div>
                             <span className="text-[11px] text-slate-400 block mt-0.5">{s.OwnerName || '-'}</span>
                           </td>
-                          <td className="py-3 px-4">
-                            <span className="inline-block bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-md font-semibold mb-0.5">
-                              {s.Route}
-                            </span>
-                            <span className="block text-[11px] text-slate-500 truncate max-w-[180px]">
-                              {s.Address}
+
+                          <td className="py-3 px-3">
+                            {s.Route && (
+                              <span className="inline-block bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-md font-semibold mb-0.5">
+                                {s.Route}
+                              </span>
+                            )}
+                            <span className="block text-[11px] text-slate-400 truncate max-w-[180px]">
+                              {s.Address || '-'}
                             </span>
                           </td>
-                          <td className="py-3 px-4 font-mono text-slate-700">
-                            {s.Users?.Phone}
+
+                          <td className="py-3 px-3">
+                            <span className="font-mono font-bold text-slate-800 block">
+                              {user?.Phone || s.Phone || '-'}
+                            </span>
                             {s.GstNumber && (
-                              <span className="block text-[10px] text-slate-400 font-sans">
+                              <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
                                 GST: {s.GstNumber}
                               </span>
                             )}
                           </td>
-                          <td className="py-3 px-4 text-center">
+
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
                             <span
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                                s.Users?.IsActive
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                isActive
                                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                   : 'bg-rose-50 text-rose-700 border-rose-200'
                               }`}
                             >
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  s.Users?.IsActive ? 'bg-emerald-500' : 'bg-rose-500'
-                                }`}
-                              />
-                              {s.Users?.IsActive ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="opacity-0 group-hover:opacity-100 text-blue-600 transition-opacity flex items-center justify-center">
-                              <Icons.Edit />
+                              <span className={`w-1.5 h-1.5 rounded-full ${isActive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                              {isActive ? 'Active' : 'Disabled'}
                             </span>
                           </td>
                         </tr>
@@ -661,215 +731,357 @@ export default function AgencyUsers() {
         </div>
       )}
 
-      {/* SUB-SECTION 2: STAFF MANAGEMENT */}
-      {activeSubTab === 'staff' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Staff Form Card */}
-          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs h-fit">
-            <div className="flex justify-between items-center pb-3 border-b border-slate-100 mb-4">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-emerald-50 text-emerald-700">
-                  {editingStaffId ? <Icons.Edit /> : <Icons.UserPlus />}
-                </span>
-                <h3 className="text-xs font-bold tracking-wide uppercase text-slate-700">
-                  {editingStaffId ? 'Edit Agency Staff' : 'Add Agency Staff'}
-                </h3>
+      {/* ============================================================= */}
+      {/* 2. AGENCY ASSOCIATION TAB */}
+      {/* ============================================================= */}
+      {activeTab === 'ASSOCIATION' && (
+        <div className="space-y-4">
+          <div className="bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-3">
+            <h3 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider">
+              Associate Enrolled Retail Store to {selectedAgency?.AgencyName}
+            </h3>
+
+            <form onSubmit={handleLinkShop} className="grid grid-cols-1 sm:grid-cols-12 gap-3 text-xs items-end">
+              <div className="sm:col-span-6">
+                <label className="block font-bold text-slate-700 mb-1">Select Enrolled Store *</label>
+                <select
+                  required
+                  value={selectedShopToLink}
+                  onChange={(e) => setSelectedShopToLink(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-slate-900/10 cursor-pointer"
+                >
+                  <option value="">-- Choose Store to Link --</option>
+                  {availableShopsToLink.map((s) => (
+                    <option key={s.ShopId} value={s.ShopId}>
+                      {s.ShopName} {s.ShopCode ? `(${s.ShopCode})` : ''} {s.Route ? `— ${s.Route}` : ''}
+                    </option>
+                  ))}
+                </select>
               </div>
 
-              {editingStaffId && (
+              <div className="sm:col-span-3">
+                <label className="block font-bold text-slate-700 mb-1">Credit Limit (₹)</label>
+                <input
+                  type="number"
+                  min="0"
+                  placeholder="0"
+                  value={creditLimit}
+                  onChange={(e) => setCreditLimit(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
+                />
+              </div>
+
+              <div className="sm:col-span-3">
+                <button
+                  type="submit"
+                  disabled={submitting || !selectedShopToLink}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl text-xs transition active:scale-95 shadow-sm cursor-pointer disabled:opacity-50"
+                >
+                  {submitting ? 'Linking...' : '+ Associate Shop to Agency'}
+                </button>
+              </div>
+            </form>
+          </div>
+
+          <div className="bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h4 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                  Shops Connected to {selectedAgency?.AgencyName}
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  Only approved stores can order products from this agency
+                </p>
+              </div>
+              <input
+                type="text"
+                placeholder="🔍 Search shop name, code, route..."
+                value={assocSearch}
+                onChange={(e) => setAssocSearch(e.target.value)}
+                className="w-full sm:w-64 border border-slate-200 bg-slate-50 rounded-xl px-3 py-1.5 text-xs focus:bg-white focus:outline-none"
+              />
+            </div>
+
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-50/75 border-b border-slate-200/80 text-slate-500 uppercase font-bold text-[10px]">
+                  <tr>
+                    <th className="py-3 px-4">Store Details</th>
+                    <th className="py-3 px-4">Owner Name</th>
+                    <th className="py-3 px-4">Route</th>
+                    <th className="py-3 px-4 text-right">Credit Limit</th>
+                    <th className="py-3 px-4 text-center">Status</th>
+                    <th className="py-3 px-4 text-center">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredAssocShops.length === 0 ? (
+                    <tr>
+                      <td colSpan="6" className="py-12 text-center text-xs text-slate-400">
+                        No stores mapped to this agency yet.
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredAssocShops.map((m) => {
+                      const shop = m.ShopDetails;
+                      return (
+                        <tr key={m.MappingId} className="hover:bg-slate-50/70 transition">
+                          <td className="py-3.5 px-4">
+                            <div className="flex items-center gap-2">
+                              {shop?.ShopCode && (
+                                <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 font-mono text-[10px] font-bold rounded">
+                                  {shop.ShopCode}
+                                </span>
+                              )}
+                              <span className="font-bold text-slate-800">{shop?.ShopName}</span>
+                            </div>
+                          </td>
+                          <td className="py-3.5 px-4 text-slate-700">{shop?.OwnerName || '-'}</td>
+                          <td className="py-3.5 px-4 text-slate-600">
+                            <span className="inline-block bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-md font-semibold">
+                              {shop?.Route || 'Direct'}
+                            </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-right font-mono font-bold text-slate-700">
+                            ₹{m.CreditLimit || 0}
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleToggleAssocStatus(m)}
+                              className={`px-2.5 py-1 rounded-full text-[10px] font-bold border transition cursor-pointer active:scale-95 ${
+                                m.IsApproved
+                                  ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                  : 'bg-rose-50 text-rose-700 border-rose-200'
+                              }`}
+                            >
+                              {m.IsApproved ? 'Approved' : 'Suspended'}
+                            </button>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveAssoc(m.MappingId)}
+                              className="px-2.5 py-1 text-slate-400 hover:text-rose-600 text-[11px] font-bold rounded-lg hover:bg-rose-50 transition cursor-pointer"
+                            >
+                              Unlink
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ============================================================= */}
+      {/* 3. AGENCY STAFF TAB (FULL MATCH TO YOUR SCREENSHOT) */}
+      {/* ============================================================= */}
+      {activeTab === 'STAFF' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* LEFT: Add / Edit Staff Form */}
+          <div className="lg:col-span-5 bg-white p-5 rounded-2xl border border-slate-200/80 shadow-xs space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-extrabold text-xs text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                <span>{editingStaff ? '📝 EDIT AGENCY STAFF' : '➕ ADD AGENCY STAFF'}</span>
+              </h3>
+              {editingStaff && (
                 <button
                   type="button"
                   onClick={resetStaffForm}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-slate-200 bg-white text-slate-600 hover:bg-rose-50 hover:text-rose-600 hover:border-rose-200 text-xs font-semibold shadow-xs transition active:scale-95 cursor-pointer"
+                  className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-600 text-xs font-bold rounded-lg cursor-pointer"
                 >
-                  <Icons.Close />
-                  <span>Cancel</span>
+                  ✕ Cancel
                 </button>
               )}
             </div>
 
             <form onSubmit={handleSaveStaff} className="space-y-3.5 text-xs">
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Staff Full Name *</label>
+                <label className="block font-bold text-slate-700 mb-1">Staff Full Name *</label>
                 <input
                   type="text"
+                  required
                   placeholder="e.g. Karthik"
-                  value={staffForm.staffName}
-                  onChange={(e) => setStaffForm({ ...staffForm, staffName: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition"
-                  required
+                  value={staffName}
+                  onChange={(e) => setStaffName(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none focus:ring-2 focus:ring-slate-900/10"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Phone Number (Login ID) *</label>
+                <label className="block font-bold text-slate-700 mb-1">Phone Number (Login ID) *</label>
                 <input
-                  type="text"
-                  maxLength="10"
+                  type="tel"
+                  required
                   placeholder="10 digits"
-                  value={staffForm.phone}
-                  onChange={(e) => setStaffForm({ ...staffForm, phone: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition font-mono"
-                  required
+                  value={staffPhone}
+                  onChange={(e) => setStaffPhone(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">
-                  Login Password {editingStaffId ? '(Secured)' : '*'}
-                </label>
+                <label className="block font-bold text-slate-700 mb-1">Login Password *</label>
                 <input
                   type="text"
-                  disabled={!!editingStaffId}
+                  required
                   placeholder="Min 6 characters"
-                  value={staffForm.password}
-                  onChange={(e) => setStaffForm({ ...staffForm, password: e.target.value })}
-                  className={`w-full border rounded-xl px-3 py-2 focus:outline-none font-mono transition ${
-                    editingStaffId
-                      ? 'bg-slate-100 text-slate-400 border-slate-200 cursor-not-allowed select-none'
-                      : 'bg-slate-50/50 text-slate-800 border-slate-200 focus:bg-white focus:border-slate-400'
-                  }`}
-                  required={!editingStaffId}
+                  value={staffPassword}
+                  onChange={(e) => setStaffPassword(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">Designation</label>
+                <label className="block font-bold text-slate-700 mb-1">Designation</label>
                 <input
                   type="text"
                   placeholder="e.g. Dispatcher / Sales Exec"
-                  value={staffForm.designation}
-                  onChange={(e) => setStaffForm({ ...staffForm, designation: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 focus:bg-white focus:border-slate-400 focus:outline-none transition"
+                  value={staffDesignation}
+                  onChange={(e) => setStaffDesignation(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs focus:outline-none"
                 />
               </div>
 
               <div>
-                <label className="block text-slate-600 font-semibold mb-1">System Role *</label>
+                <label className="block font-bold text-slate-700 mb-1">System Role *</label>
                 <select
-                  value={staffForm.roleId}
-                  onChange={(e) => setStaffForm({ ...staffForm, roleId: e.target.value })}
-                  className="w-full bg-slate-50/50 border border-slate-200 rounded-xl px-3 py-2 text-slate-800 font-semibold focus:bg-white focus:border-slate-400 focus:outline-none transition cursor-pointer"
+                  value={staffRole}
+                  onChange={(e) => setStaffRole(e.target.value)}
+                  className="w-full border border-slate-300 rounded-xl px-3 py-2 text-xs bg-white focus:outline-none cursor-pointer"
                 >
-                  {roles
-                    .filter((r) => r.RoleName.startsWith('Agency'))
-                    .map((r) => (
-                      <option key={r.RoleId} value={r.RoleId}>
-                        {r.RoleName} ({r.Description || 'Access'})
-                      </option>
-                    ))}
+                  <option value={1}>AgencyAdmin (Super Administrator / Agency Owner)</option>
+                  <option value={2}>Staff (Billing & Counter Operator)</option>
                 </select>
               </div>
 
-              {/* IN-FORM ACTIVE SWITCH */}
-              <div className="flex items-center justify-between p-3 bg-slate-50 border border-slate-200/80 rounded-xl">
+              {/* iOS Green Account Status Toggle */}
+              <div className="flex items-center justify-between pt-1">
                 <div>
-                  <span className="font-semibold text-slate-700 block">Account Status</span>
-                  <span className="text-[11px] text-slate-500">
-                    {staffForm.isActive ? 'Active (Panel access enabled)' : 'Inactive (Login restricted)'}
+                  <span className="block font-bold text-slate-800 text-xs">Account Status</span>
+                  <span className="block text-[11px] text-slate-400">
+                    {staffIsActive ? 'Active (Panel access enabled)' : 'Disabled / Suspended'}
                   </span>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setStaffForm((prev) => ({ ...prev, isActive: !prev.isActive }))}
-                  className={`w-11 h-6 flex items-center rounded-full p-1 transition-colors duration-200 cursor-pointer ${
-                    staffForm.isActive ? 'bg-emerald-600 justify-end' : 'bg-slate-300 justify-start'
+                  role="switch"
+                  aria-checked={staffIsActive}
+                  onClick={() => setStaffIsActive((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    staffIsActive ? 'bg-emerald-600' : 'bg-slate-300'
                   }`}
                 >
-                  <div className="bg-white w-4 h-4 rounded-full shadow-xs transform" />
+                  <span
+                    className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      staffIsActive ? 'translate-x-5' : 'translate-x-0'
+                    }`}
+                  />
                 </button>
               </div>
 
               <button
                 type="submit"
-                className={`w-full py-2.5 text-white font-bold rounded-xl shadow-xs transition active:scale-95 cursor-pointer ${
-                  editingStaffId ? 'bg-blue-600 hover:bg-blue-700' : 'bg-slate-900 hover:bg-slate-800'
-                }`}
+                disabled={submitting}
+                className="w-full py-2.5 mt-2 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-xl text-xs transition active:scale-95 cursor-pointer disabled:opacity-50"
               >
-                {editingStaffId ? 'Update Staff Member' : 'Create Staff Access'}
+                {submitting
+                  ? 'Saving...'
+                  : editingStaff
+                  ? 'Update Staff Access'
+                  : 'Create Staff Access'}
               </button>
             </form>
           </div>
 
-          {/* Staff Table Card */}
-          <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-slate-100 flex justify-between items-center bg-white">
+          {/* RIGHT: Agency Personnel List Grid (Matches Exact Columns in Screenshot 2) */}
+          <div className="lg:col-span-7 bg-white rounded-2xl border border-slate-200/80 shadow-xs overflow-hidden">
+            <div className="p-4 border-b border-slate-100 flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-bold text-slate-800">Agency Personnel</h3>
-                <p className="text-[11px] text-slate-400">Click any row to load into editor</p>
+                <h4 className="font-extrabold text-xs text-slate-900 uppercase tracking-wider">
+                  Agency Personnel
+                </h4>
+                <p className="text-[11px] text-slate-400 mt-0.5">Click any row to load into editor</p>
               </div>
               <button
                 type="button"
                 onClick={fetchStaff}
-                disabled={isRefreshing}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-slate-600 bg-slate-50 border border-slate-200 rounded-lg hover:bg-slate-100 hover:text-slate-800 transition active:scale-95 disabled:opacity-50 cursor-pointer"
+                className="flex items-center gap-1 px-3 py-1 bg-slate-50 hover:bg-slate-100 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 cursor-pointer"
               >
-                <span className={isRefreshing ? 'animate-spin' : ''}>
-                  <Icons.Refresh />
-                </span>
-                <span>Refresh</span>
+                🔄 Refresh
               </button>
             </div>
 
-            <div className="overflow-x-auto flex-1">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-slate-50/75 border-b border-slate-100 text-slate-500 uppercase text-[10px] font-bold tracking-wider">
+            <div className="w-full overflow-x-auto">
+              <table className="w-full text-left text-xs border-collapse">
+                <thead className="bg-slate-50/75 border-b border-slate-200/80 text-slate-500 uppercase font-bold text-[10px]">
                   <tr>
-                    <th className="py-3 px-4">Staff Name</th>
-                    <th className="py-3 px-4">Designation</th>
-                    <th className="py-3 px-4">Role</th>
-                    <th className="py-3 px-4">Phone</th>
-                    <th className="py-3 px-4 text-center">Status</th>
-                    <th className="py-3 px-4 text-center w-12"></th>
+                    <th className="py-2.5 px-3">STAFF NAME</th>
+                    <th className="py-2.5 px-3">DESIGNATION</th>
+                    <th className="py-2.5 px-3">ROLE</th>
+                    <th className="py-2.5 px-3">PHONE</th>
+                    <th className="py-2.5 px-3 text-center">STATUS</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {staffList.length === 0 ? (
                     <tr>
-                      <td colSpan="6" className="py-12 text-center text-slate-400">
-                        No agency personnel found.
+                      <td colSpan="5" className="py-12 text-center text-xs text-slate-400">
+                        No agency personnel registered yet.
                       </td>
                     </tr>
                   ) : (
                     staffList.map((st) => {
-                      const isSelected = editingStaffId === st.StaffId;
+                      const isSelected = editingStaff?.UserId === st.UserId;
                       return (
                         <tr
-                          key={st.StaffId}
-                          onClick={() => startEditStaff(st)}
-                          className={`group cursor-pointer transition select-none ${
+                          key={st.UserId}
+                          onClick={() => loadStaffIntoEditor(st)}
+                          className={`cursor-pointer transition ${
                             isSelected
-                              ? 'bg-blue-50/80 ring-2 ring-inset ring-blue-500/50'
+                              ? 'bg-emerald-50/80 border-l-4 border-l-emerald-600'
                               : 'hover:bg-slate-50/70'
                           }`}
                         >
-                          <td className="py-3 px-4 font-bold text-slate-800">{st.StaffName}</td>
-                          <td className="py-3 px-4 text-slate-600">{st.Designation || '-'}</td>
-                          <td className="py-3 px-4">
-                            <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-md font-semibold border border-slate-200/80">
-                              {st.Users?.Roles?.RoleName}
+                          <td className="py-3 px-3 font-bold text-slate-900">
+                            {st.FullName || 'Unnamed Staff'}
+                          </td>
+
+                          <td className="py-3 px-3 text-slate-600">
+                            {st.Designation || '-'}
+                          </td>
+
+                          <td className="py-3 px-3">
+                            <span
+                              className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
+                                st.RoleId === 1
+                                  ? 'bg-indigo-50 text-indigo-700 border-indigo-200'
+                                  : 'bg-amber-50 text-amber-700 border-amber-200'
+                              }`}
+                            >
+                              {st.RoleId === 1 ? 'AgencyAdmin' : 'Staff'}
                             </span>
                           </td>
-                          <td className="py-3 px-4 font-mono text-slate-700">{st.Users?.Phone}</td>
-                          <td className="py-3 px-4 text-center">
+
+                          <td className="py-3 px-3 font-mono font-bold text-slate-800">
+                            {st.Phone}
+                          </td>
+
+                          <td className="py-3 px-3 text-center whitespace-nowrap">
                             <span
-                              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
-                                st.Users?.IsActive
+                              className={`inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
+                                st.IsActive
                                   ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
                                   : 'bg-rose-50 text-rose-700 border-rose-200'
                               }`}
                             >
-                              <span
-                                className={`w-1.5 h-1.5 rounded-full ${
-                                  st.Users?.IsActive ? 'bg-emerald-500' : 'bg-rose-500'
-                                }`}
-                              />
-                              {st.Users?.IsActive ? 'Active' : 'Inactive'}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4 text-center">
-                            <span className="opacity-0 group-hover:opacity-100 text-blue-600 transition-opacity flex items-center justify-center">
-                              <Icons.Edit />
+                              <span className={`w-1.5 h-1.5 rounded-full ${st.IsActive ? 'bg-emerald-500' : 'bg-rose-500'}`} />
+                              {st.IsActive ? 'Active' : 'Disabled'}
                             </span>
                           </td>
                         </tr>
